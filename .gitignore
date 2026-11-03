@@ -1,0 +1,23 @@
+# Виртуальное окружение Python
+.venv/
+__pycache__/
+*.pyc
+
+# Локальные файлы SDK КОМПАС-3D (генерируются локально)
+sdk_ref/include/
+
+# Выходные файлы моделей и рендеров
+#output/
+#*.m3d
+#*.a3d
+#*.cdw
+*.bak
+
+# Локальные сессии Claude
+.claude/settings.local.json
+
+# Рабочие локальные файлы и временные файлы
+*.tmp
+tree_md.py
+tree.md
+
