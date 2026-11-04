@@ -566,18 +566,22 @@ class KompasPart:
     def _make_dim_driving(self, dim_obj, expr_str: str):
         """Пытается сделать 2D-размер API7 управляющим (фиксированным) и назначить ему переменную."""
         dobj = _wrap(K7.IDrawingObject1, dim_obj)
-        # Пробуем все возможные коды параметрического ограничения для размера (0..25)
+        # Пробуем все возможные коды параметрического ограничения для размера (0..100)
+        # Диаметральные размеры обычно принимают тип 1 (Horizontal),
+        # линейные размеры могут требовать иные типы (0..100).
         accepted_codes = []
-        for ctype in range(26):
+        for ctype in range(101):
             try:
                 con = _wrap(K7.IParametriticConstraint, dobj.NewConstraint())
                 con.ConstraintType = ctype
-                if expr_str:
-                    try:
-                        con.Expression = str(expr_str)
-                    except Exception:
-                        pass
                 if con.Create():
+                    # Выражение задаём ПОСЛЕ Create(), т.к. для некоторых типов размеров
+                    # (особенно линейных) свойство Expression доступно только после создания ограничения
+                    if expr_str:
+                        try:
+                            con.Expression = str(expr_str)
+                        except Exception:
+                            pass
                     accepted_codes.append(ctype)
                     dim_obj.Update()
                     break
@@ -594,7 +598,7 @@ class KompasPart:
                 log.debug(f"  [API7 DIM CONSTRAINT] dobj.Constraints = {cons}")
             except Exception as e:
                 log.debug(
-                    f"  [API7 DIM CONSTRAINT] Нет принятых ConstraintType (0..25), err={e}"
+                    f"  [API7 DIM CONSTRAINT] Нет принятых ConstraintType (0..100), err={e}"
                 )
 
     def _apply_api7_sketch_dims_and_constraints(self, sk_ent, builder: SketchBuilder):
