@@ -41,7 +41,7 @@ def _extract_vars_from_feature7(feat7) -> list[tuple[str, str, float, str, str]]
 
 
 def _inspect_sketch_geometry(sk_ent, sf7) -> list[str]:
-    """Извлекает базовую плоскость/грань эскиза и координаты всех отрезков, осевых и окружностей."""
+    """Извлекает базовую плоскость/грань эскиза и координаты всех отрезков, осевых, окружностей и дуг."""
     lines_info = []
     try:
         sk_def = _wrap(K5.ksSketchDefinition, sk_ent.GetDefinition())
@@ -56,32 +56,7 @@ def _inspect_sketch_geometry(sk_ent, sf7) -> list[str]:
     except Exception:
         return lines_info
 
-    # Открываем эскиз и читаем примитивы через API7 IDrawingContainer (LineSegments, Circles, Arcs)
-    doc2d_raw = sk_def.BeginEdit()
-    try:
-        # Также проверяем итератор API5 с правильным приведением типов
-        doc2d = _wrap(K5.ksDocument2D, doc2d_raw)
-        # В API7 активный 2D-документ в режиме редактирования эскиза отдает IDrawingContainer
-        try:
-            sk7 = _wrap(K7.ISketch, sf7)
-            frag7 = sk7.BeginEdit()
-            views_mgr = _wrap(K7.IViewsAndLayersManager, frag7.ViewsAndLayersManager)
-            view7 = _wrap(K7.IView, views_mgr.Views.ActiveView)
-            dc = _wrap(K7.IDrawingContainer, view7)
-            sk7.EndEdit()
-        except Exception:
-            dc = None
-
-        # Если IDrawingContainer доступен напрямую из sk7:
-        if dc is None:
-            # Читаем через итератор текущего документа doc2d
-            pass
-    except Exception:
-        pass
-    finally:
-        sk_def.EndEdit()
-
-    # Чтение 2D-объектов через API7 ISketch.BeginEdit() (когда эскиз закрыт в API5)
+    # Чтение 2D-объектов через API7 ISketch.BeginEdit()
     try:
         sk7 = _wrap(K7.ISketch, sf7)
         doc2d_7 = _wrap(K7.IKompasDocument2D, sk7.BeginEdit())
@@ -108,8 +83,13 @@ def _inspect_sketch_geometry(sk_ent, sf7) -> list[str]:
             circs = _wrap(K7.ICircles, dc.Circles)
             for i in range(circs.Count):
                 c = _wrap(K7.ICircle, circs.Circle(i))
+                st = (
+                    "ОСЕВАЯ (style=3)"
+                    if c.Style == 3
+                    else f"Основная (style={c.Style})"
+                )
                 lines_info.append(
-                    f"  - Окружность [style={c.Style}]: Центр `({c.Xc:.2f}, {c.Yc:.2f})`, Радиус `R={c.Radius:.2f}` (`D={c.Radius * 2:.2f}`)"
+                    f"  - Окружность [{st}]: Центр `({c.Xc:.2f}, {c.Yc:.2f})`, Радиус `R={c.Radius:.2f}` (`D={c.Radius * 2:.2f}`)"
                 )
 
             # 3. Дуги (Arcs)
@@ -134,7 +114,7 @@ def inspect_m3d(filepath: str) -> str:
         raise FileNotFoundError(f"Файл не найден: {abs_path}")
 
     pythoncom.CoInitialize()
-    api5 = _connect_existing_or_new_kompas(visible=True)
+    api5 = _connect_existing_or_new_kompas(visible=True, task_access=1)
     api7 = _wrap(K7.IApplication, api5.ksGetApplication7())
 
     docs = _wrap(K7.IDocuments, api7.Documents)
