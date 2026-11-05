@@ -1,5 +1,5 @@
 # build_die_plate.py — Параметрическая нижняя плита штампа/приспособления
-from kompas_core import DT_NORMAL, DT_REVERSE, STYLE_MAIN, KompasPart
+from kompas_core import DT_NORMAL, DT_REVERSE, STYLE_MAIN, STYLE_THIN, KompasPart
 
 
 def build_die_plate():
@@ -36,8 +36,10 @@ def build_die_plate():
         "xy",
         lambda sk: (
             sk.rect(0, 0, L, W, centered=True),
-            sk.dim_hor(0, -L / 2.0, L / 2.0, var_name="L"),
-            sk.dim_ver(W / 2.0 + 10.0, -W / 2.0, W / 2.0, var_name="W"),
+            # Размер по верхнему краю прямоугольника (y = W/2)
+            sk.dim_hor(W / 2.0 + 10.0, -L / 2.0, L / 2.0, var_name="L", y_pts=W / 2.0),
+            # Размер по правому краю прямоугольника (x = L/2)
+            sk.dim_ver(L / 2.0 + 10.0, -W / 2.0, W / 2.0, var_name="W", x_pts=L / 2.0),
         ),
     )
     part.extrude(sk1, depth=H, direction=DT_NORMAL, expr="H")
@@ -50,8 +52,10 @@ def build_die_plate():
         face_front,
         lambda sk: (
             sk.rect(0, 0, a_win, b_win, centered=True),
-            sk.dim_hor(0, -a_win / 2.0, a_win / 2.0, var_name="a_win"),
-            sk.dim_ver(a_win / 2.0 + 10.0, -b_win / 2.0, b_win / 2.0, var_name="b_win"),
+            # Размер по верхнему краю окна (y = b_win/2)
+            sk.dim_hor(b_win / 2.0 + 10.0, -a_win / 2.0, a_win / 2.0, var_name="a_win", y_pts=b_win / 2.0),
+            # Размер по правому краю окна (x = a_win/2)
+            sk.dim_ver(a_win / 2.0 + 10.0, -b_win / 2.0, b_win / 2.0, var_name="b_win", x_pts=a_win / 2.0),
         ),
     )
     part.cut(sk2, depth=H, direction=DT_NORMAL, expr="H", through_all=True)
@@ -64,13 +68,17 @@ def build_die_plate():
     sk3 = part.create_sketch_on_face(
         face_front,
         lambda sk: (
+            # 4 отверстия колонок d_col по углам (±Lx/2, ±Ly/2)
             sk.circle(Lx / 2.0, Ly / 2.0, d_col / 2.0, style=STYLE_MAIN),
             sk.circle(-Lx / 2.0, Ly / 2.0, d_col / 2.0, style=STYLE_MAIN),
             sk.circle(Lx / 2.0, -Ly / 2.0, d_col / 2.0, style=STYLE_MAIN),
             sk.circle(-Lx / 2.0, -Ly / 2.0, d_col / 2.0, style=STYLE_MAIN),
-            # Управляющие размеры для позиционирования и диаметра
-            sk.dim_hor(Ly / 2.0 + 15.0, 0.0, Lx / 2.0, var_name="Lx/2"),
-            sk.dim_ver(Lx / 2.0 + 15.0, 0.0, Ly / 2.0, var_name="Ly/2"),
+            # Конструктивные оси для позиционирования отверстия (первая четверть)
+            sk.line(0, 0, Lx / 2.0, 0, style=STYLE_THIN),       # горизонтальная ось X к центру отверстия
+            sk.line(Lx / 2.0, 0, Lx / 2.0, Ly / 2.0, style=STYLE_THIN),  # вертикальная ось Y к центру отверстия
+            # Управляющие размеры (ссылаются на конструктивные линии)
+            sk.dim_hor(Ly / 2.0 + 10.0, 0, Lx / 2.0, var_name="Lx/2", y_pts=0.0),
+            sk.dim_ver(Lx / 2.0 + 10.0, 0, Ly / 2.0, var_name="Ly/2", x_pts=Lx / 2.0),
             sk.dim_diam(Lx / 2.0, Ly / 2.0, d_col / 2.0, var_name="d_col"),
         ),
     )
