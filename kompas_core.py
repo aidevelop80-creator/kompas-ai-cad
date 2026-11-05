@@ -93,8 +93,10 @@ OBJ_FACE = 6  # o3d_face (Грань тела)
 OBJ_AXIS_2PLANES = 9  # o3d_axis2Planes (Ось на пересечении двух плоскостей)
 OBJ_AXIS_CONICAL = 11  # o3d_axisConeFace (Ось конической/цилиндрической грани)
 
-OBJ_FILLET = 15  # o3d_fillet
-OBJ_CHAMFER = 16  # o3d_chamfer
+OBJ_FILLET = 34  # o3d_fillet
+OBJ_CHAMFER = 33  # o3d_chamfer
+OBJ_POINT_PATTERN = 507  # o3d_PointDrivenPattern (Массив по точкам)
+OBJ_POINT_3D = 70  # o3d_point3D (Пространственная точка)
 OBJ_BASE_EXTRUDE = 24   # o3d_baseExtrusion
 OBJ_BOSS_EXTRUDE = 25   # o3d_bossExtrusion (Приклеить выдавливанием)
 OBJ_CUT_EXTRUDE = 26    # o3d_cutExtrusion (Вырезать выдавливанием)
@@ -198,6 +200,12 @@ class SketchBuilder:
             )
         if closed and len(points) > 2:
             self.line(points[-1][0], points[-1][1], points[0][0], points[0][1], style)
+        return self
+
+    def point(self, x: float, y: float, style: int = STYLE_MAIN):
+        """Создает 2D-точку (ksPoint)."""
+        ref = self.doc2d.ksPoint(float(x), float(y), int(style))
+        log.debug(f"  [2D] Точка: ({x:.2f}, {y:.2f}), ref={ref}")
         return self
 
     def dim_linear(
@@ -440,6 +448,76 @@ class KompasPart:
             raise RuntimeError("[FAIL AXIS] Не удалось создать ось по цилиндрической грани!")
         self.part.Update()
         log.info(f"Создана конструктивная ось по цилиндрической грани: '{ent.name}'")
+        return ent
+
+    def _find_feature7_by_name(self, name: str):
+        """Находит IFeature7 в дереве модели по имени (очищенному от (+)/(-))."""
+        part7 = self._get_part7()
+        if not part7:
+            return None
+        feat7_root = _wrap(K7.IFeature7, part7)
+        raw_sub = feat7_root.SubFeatures(0, True, False)
+        sub_list = (
+            raw_sub
+            if isinstance(raw_sub, (list, tuple))
+            else ([raw_sub] if raw_sub else [])
+        )
+        for item in sub_list:
+            sf = _wrap(K7.IFeature7, item)
+            clean = str(sf.Name or "").replace("(+)", "").replace("(-)", "").strip()
+            if clean == name.strip():
+                return sf
+        return None
+
+    def create_point3d(self, x: float, y: float, z: float):
+        """Создает пространственную точку (o3d_point3D = 70) по координатам через API7 IPoint3D."""
+        # 1. Создаём сущность через API5
+        ent = _wrap(K5.ksEntity, self.part.NewEntity(OBJ_POINT_3D))
+        if not ent.Create():
+            log.error(f"[FAIL POINT3D] Не удалось создать сущность точки в ({x}, {y}, {z})!")
+            raise RuntimeError("[FAIL POINT3D] Не удалось создать пространственную точку!")
+        self.part.Update()
+
+        # 2. Находим соответствующий IFeature7 и оборачиваем как IPoint3D
+        # Имя сущности в дереве может отличаться — ищем последнюю добавленную точку
+        point7 = None
+        part7 = self._get_part7()
+        if part7:
+            feat7_root = _wrap(K7.IFeature7, part7)
+            raw_sub = feat7_root.SubFeatures(0, True, False)
+            sub_list = (
+                raw_sub
+                if isinstance(raw_sub, (list, tuple))
+                else ([raw_sub] if raw_sub else [])
+            )
+            # Идём с конца, так как точка только что создалась
+            for item in reversed(sub_list):
+                sf = _wrap(K7.IFeature7, item)
+                # Проверяем, что это точка (o3d_point3D = 70)
+                try:
+                    if sf.Type == 70:
+                        point7 = _wrap(K7.IPoint3D, sf)
+                        break
+                except Exception:
+                    continue
+
+        if point7 is None:
+            log.error("[FAIL POINT3D] Не удалось получить IPoint3D для созданной точки!")
+            raise RuntimeError("[FAIL POINT3D] Не удалось получить интерфейс IPoint3D!")
+
+        # 3. Настраиваем через API7: тип = по координатам (1), координаты X, Y, Z
+        try:
+            point7.ParameterType = 1  # ksPParamCoord
+            point7.X = float(x)
+            point7.Y = float(y)
+            point7.Z = float(z)
+            point7.Update()
+        except Exception as e:
+            log.error(f"[FAIL POINT3D] Ошибка установки параметров: {e}")
+            raise RuntimeError(f"[FAIL POINT3D] Ошибка настройки точки: {e}")
+
+        self.part.Update()
+        log.info(f"Создана пространственная точка: '{ent.name}' ({x:.2f}, {y:.2f}, {z:.2f})")
         return ent
 
     def _get_face_bbox(
@@ -1219,6 +1297,534 @@ class KompasPart:
             f"V_before={vol_before:.2f} -> V_after={vol_after:.2f} (ΔV={vol_after - vol_before:.2f} мм³)"
         )
         return ent
+
+    def fillet(self, edges: list, radius: float, expr: str = None):
+        """Скругление ребер (o3d_fillet = 34)."""
+        vol_before = self.volume()
+        vars_before = set(self._get_all_feature_var_names())
+
+        ent = _wrap(K5.ksEntity, self.part.NewEntity(OBJ_FILLET))
+        defn = _wrap(K5.ksFilletDefinition, ent.GetDefinition())
+        defn.radius = float(radius)
+        defn.tangent = True  # распространять по касательным
+
+        edge_collection = _wrap(K5.ksEntityCollection, defn.array())
+        for edge in edges:
+            edge_collection.Add(_ole(edge))
+
+        if not ent.Create():
+            log.error(f"[FAIL FILLET] Операция скругления '{ent.name}' не построилась!")
+            self.close()
+            raise RuntimeError("[FAIL FILLET] Операция скругления не построилась!")
+        self.part.Update()
+
+        if expr:
+            self._bind_new_vars_to_expressions(
+                vars_before, [(float(radius), expr)], context=ent.name
+            )
+            self.part.RebuildModel()
+            self.part.Update()
+
+        vol_after = self.volume()
+        log.info(
+            f"[FILLET OK] '{ent.name}': radius={radius} (expr='{expr}'), "
+            f"V_before={vol_before:.2f} -> V_after={vol_after:.2f} (ΔV={vol_after - vol_before:.2f} мм³)"
+        )
+        return ent
+
+    def chamfer(self, edges: list, distance: float, angle: float = 45.0, expr: str = None):
+        """Фаска ребер (o3d_chamfer = 33). distance — длина фаски, angle — угол (обычно 45°).
+        В API5 фаска задается двумя расстояниями distance1, distance2 и флагом transfer.
+        Для симметричной фаски 45°: distance1 = distance2 = distance, transfer = False.
+        """
+        vol_before = self.volume()
+        vars_before = set(self._get_all_feature_var_names())
+
+        ent = _wrap(K5.ksEntity, self.part.NewEntity(OBJ_CHAMFER))
+        defn = _wrap(K5.ksChamferDefinition, ent.GetDefinition())
+        # Для симметричной фаски 45°: distance1 = distance2 = distance, transfer = False
+        defn.SetChamferParam(False, float(distance), float(distance))
+        defn.tangent = True
+
+        edge_collection = _wrap(K5.ksEntityCollection, defn.array())
+        for edge in edges:
+            edge_collection.Add(_ole(edge))
+
+        if not ent.Create():
+            log.error(f"[FAIL CHAMFER] Операция фаски '{ent.name}' не построилась!")
+            self.close()
+            raise RuntimeError("[FAIL CHAMFER] Операция фаски не построилась!")
+        self.part.Update()
+
+        if expr:
+            self._bind_new_vars_to_expressions(
+                vars_before, [(float(distance), expr)], context=ent.name
+            )
+            self.part.RebuildModel()
+            self.part.Update()
+
+        vol_after = self.volume()
+        log.info(
+            f"[CHAMFER OK] '{ent.name}': distance={distance}, angle={angle} (expr='{expr}'), "
+            f"V_before={vol_before:.2f} -> V_after={vol_after:.2f} (ΔV={vol_after - vol_before:.2f} мм³)"
+        )
+        return ent
+
+    def point_pattern(self, features: list, points: list):
+        """Массив по точкам (o3d_PointDrivenPattern = 507).
+        points — список точек-экземпляров (ksEntity типа o3d_point3D = 70) или вершин."""
+        vol_before = self.volume()
+
+        try:
+            ent = _wrap(K5.ksEntity, self.part.NewEntity(OBJ_POINT_PATTERN))
+            defn_raw = ent.GetDefinition()
+            ole_defn = defn_raw._oleobj_ if hasattr(defn_raw, '_oleobj_') else defn_raw
+            log.info(f"  [POINT PATTERN] Definition raw object: {type(ole_defn)}")
+
+            # Получаем массив операций через перебор DISPID
+            op_array = None
+            for dispid in range(0, 50):
+                try:
+                    result = ole_defn.InvokeTypes(dispid, 0, 1, (9, 0), ())
+                    if result is not None and hasattr(result, '_oleobj_'):
+                        log.info(f"  [POINT PATTERN] DISPID {dispid} как метод вернул COM object: {type(result)}")
+                        op_array = result
+                        break
+                except Exception:
+                    pass
+                try:
+                    result = ole_defn.InvokeTypes(dispid, 0, 2, (9, 0), ())
+                    if result is not None and hasattr(result, '_oleobj_'):
+                        log.info(f"  [POINT PATTERN] DISPID {dispid} как свойство вернул COM object: {type(result)}")
+                        op_array = result
+                        break
+                except Exception:
+                    pass
+
+            if op_array is None:
+                dyn_defn = dynamic.DumbDispatch(defn_raw)
+                try:
+                    op_array = dyn_defn.OperationArray
+                    if op_array is not None and hasattr(op_array, '_oleobj_'):
+                        log.info("  [POINT PATTERN] Получен OperationArray через dynamic dispatch .OperationArray")
+                except Exception:
+                    pass
+                if op_array is None:
+                    try:
+                        op_array = dyn_defn.GetOperationArray
+                        if op_array is not None and hasattr(op_array, '_oleobj_'):
+                            log.info("  [POINT PATTERN] Получен OperationArray через dynamic dispatch .GetOperationArray")
+                    except Exception:
+                        pass
+
+            if op_array is None or not hasattr(op_array, '_oleobj_'):
+                log.error("  [POINT PATTERN] Не удалось получить OperationArray ни одним способом")
+                raise RuntimeError("[FAIL POINT PATTERN] Не удалось получить массив операций для массива по точкам")
+
+            log.info(f"  [POINT PATTERN] Получен OperationArray: {type(op_array)}")
+
+            flist = _wrap(K5.ksEntityCollection, op_array)
+            flist.Clear()
+            for f in features:
+                flist.Add(_ole(f))
+
+            # Получаем массив точек для паттерна
+            # Пробуем найти DISPID для Points/ExemplarPoints
+            points_array = None
+            for dispid in range(0, 50):
+                try:
+                    result = ole_defn.InvokeTypes(dispid, 0, 1, (9, 0), ())
+                    if result is not None and hasattr(result, '_oleobj_'):
+                        # Проверяем, похож ли это на массив точек
+                        log.info(f"  [POINT PATTERN] DISPID {dispid} как метод вернул: {type(result)}")
+                        points_array = result
+                        break
+                except Exception:
+                    pass
+                try:
+                    result = ole_defn.InvokeTypes(dispid, 0, 2, (9, 0), ())
+                    if result is not None and hasattr(result, '_oleobj_'):
+                        log.info(f"  [POINT PATTERN] DISPID {dispid} как свойство вернул: {type(result)}")
+                        points_array = result
+                        break
+                except Exception:
+                    pass
+
+            if points_array is None:
+                # Пробуем через dynamic dispatch
+                dyn_defn = dynamic.DumbDispatch(defn_raw)
+                try:
+                    points_array = dyn_defn.Points
+                    if points_array is not None and hasattr(points_array, '_oleobj_'):
+                        log.info("  [POINT PATTERN] Получен Points через dynamic dispatch .Points")
+                except Exception:
+                    pass
+                if points_array is None:
+                    try:
+                        points_array = dyn_defn.ExemplarPoints
+                        if points_array is not None and hasattr(points_array, '_oleobj_'):
+                            log.info("  [POINT PATTERN] Получен ExemplarPoints через dynamic dispatch .ExemplarPoints")
+                    except Exception:
+                        pass
+
+            if points_array is None or not hasattr(points_array, '_oleobj_'):
+                log.error("  [POINT PATTERN] Не удалось получить массив точек для паттерна")
+                raise RuntimeError("[FAIL POINT PATTERN] Не удалось получить массив точек для массива по точкам")
+
+            plist = _wrap(K5.ksEntityCollection, points_array)
+            plist.Clear()
+            for pt in points:
+                plist.Add(_ole(pt))
+
+            created = ent.Create()
+
+            if not created:
+                log.error(f"[FAIL POINT PATTERN] Массив по точкам '{ent.name}' не построился!")
+                self.close()
+                raise RuntimeError("[FAIL POINT PATTERN] Массив по точкам не построился!")
+            self.part.Update()
+        except Exception as e:
+            log.error(f"[FAIL POINT PATTERN EXCEPTION] {e}\n{traceback.format_exc()}")
+            self.close()
+            raise
+
+        vol_after = self.volume()
+        log.info(
+            f"[POINT PATTERN OK] '{ent.name}': count={len(features)} features, {len(points)} points, "
+            f"V_before={vol_before:.2f} -> V_after={vol_after:.2f} (ΔV={vol_after - vol_before:.2f} мм³)"
+        )
+        return ent
+
+    def get_sketch_points(self, sketch_ent):
+        """Возвращает список 2D-точек эскиза (ksPoint) как COM-объекты для использования в массиве по точкам.
+        Эскиз должен быть на плоской грани — тогда 2D-точки имеют 3D-позицию на этой грани.
+        """
+        sk_feat7 = self._find_sketch_feature7(sketch_ent)
+        if sk_feat7 is None:
+            log.warning(f"  [SKETCH POINTS] Не найден IFeature7 для '{sketch_ent.name}'")
+            return []
+
+        try:
+            sk7 = _wrap(K7.ISketch, sk_feat7)
+            doc2d_7 = _wrap(K7.IKompasDocument2D, sk7.BeginEdit())
+            try:
+                v_mgr = _wrap(K7.IViewsAndLayersManager, doc2d_7.ViewsAndLayersManager)
+                views = _wrap(K7.IViews, v_mgr.Views)
+                v0 = _wrap(K7.IView, views.ActiveView)
+                dc = _wrap(K7.IDrawingContainer, v0)
+
+                points_2d = _wrap(K7.IPoints, dc.Points)
+                pts = []
+                for i in range(points_2d.Count):
+                    pt = _wrap(K7.IPoint, points_2d.Point(i))
+                    pts.append(pt)
+                log.info(f"  [SKETCH POINTS] Найдено 2D-точек в эскизе '{sketch_ent.name}': {len(pts)}")
+                return pts
+            finally:
+                sk7.EndEdit()
+        except Exception as e:
+            log.error(f"  [SKETCH POINTS] Ошибка получения точек: {e}")
+            return []
+
+    def point_pattern(self, features: list, points: list):
+        """Массив по точкам (o3d_PointDrivenPattern = 507).
+        points — список 2D-точек эскиза (IPoint) или 3D-точек/вершин.
+        Работает через API5 определение (получаемое через InvokeTypes на сырой сущности).
+        """
+        vol_before = self.volume()
+
+        try:
+            # 1. Создаём СЫРУЮ сущность через API5 части (как в рабочем тесте: part.part.NewEntity)
+            raw_ent = self.part.NewEntity(OBJ_POINT_PATTERN)
+            ole_ent = _ole(raw_ent)  # получаем сырой COM
+
+            # 2. Получаем определение через InvokeTypes на сырой сущности (DISPID 6 — Definition)
+            defn_raw = None
+            for dispid in (6, 11):
+                try:
+                    result = ole_ent.InvokeTypes(dispid, 0, 2, (9, 0), ())  # PROPGET
+                    if result is not None and hasattr(result, '_oleobj_'):
+                        defn_raw = result
+                        log.info(f"  [POINT PATTERN] Получено определение через DISPID {dispid}: {type(defn_raw)}")
+                        break
+                except Exception as e:
+                    log.debug(f"  [POINT PATTERN] DISPID {dispid} error: {e}")
+                    pass
+
+            if defn_raw is None:
+                log.error("  [POINT PATTERN] Не удалось получить определение через InvokeTypes!")
+                raise RuntimeError("[FAIL POINT PATTERN] Не удалось получить определение массива по точкам!")
+
+            ole_defn = defn_raw._oleobj_ if hasattr(defn_raw, '_oleobj_') else defn_raw
+            log.info(f"  [POINT PATTERN] Definition raw object: {type(ole_defn)}")
+
+            # 3. Получаем массив исходных объектов (InitialObjects) через DISPID
+            op_array = None
+            for dispid in range(0, 50):
+                try:
+                    result = ole_defn.InvokeTypes(dispid, 0, 1, (9, 0), ())
+                    if result is not None and hasattr(result, '_oleobj_'):
+                        log.info(f"  [POINT PATTERN] DISPID {dispid} как метод вернул COM object: {type(result)}")
+                        op_array = result
+                        break
+                except Exception:
+                    pass
+                try:
+                    result = ole_defn.InvokeTypes(dispid, 0, 2, (9, 0), ())
+                    if result is not None and hasattr(result, '_oleobj_'):
+                        log.info(f"  [POINT PATTERN] DISPID {dispid} как свойство вернул COM object: {type(result)}")
+                        op_array = result
+                        break
+                except Exception:
+                    pass
+
+            if op_array is None:
+                dyn_defn = dynamic.DumbDispatch(defn_raw)
+                try:
+                    op_array = dyn_defn.InitialObjects
+                    if op_array is not None and hasattr(op_array, '_oleobj_'):
+                        log.info("  [POINT PATTERN] Получен InitialObjects через dynamic dispatch .InitialObjects")
+                except Exception:
+                    pass
+                if op_array is None:
+                    try:
+                        op_array = dyn_defn.GetInitialObjects
+                        if op_array is not None and hasattr(op_array, '_oleobj_'):
+                            log.info("  [POINT PATTERN] Получен InitialObjects через dynamic dispatch .GetInitialObjects")
+                    except Exception:
+                        pass
+
+            if op_array is None or not hasattr(op_array, '_oleobj_'):
+                log.error("  [POINT PATTERN] Не удалось получить InitialObjects ни одним способом")
+                raise RuntimeError("[FAIL POINT PATTERN] Не удалось получить массив исходных объектов для массива по точкам")
+
+            log.info(f"  [POINT PATTERN] Получен InitialObjects: {type(op_array)}")
+
+            flist = _wrap(K5.ksEntityCollection, op_array)
+            flist.Clear()
+            for f in features:
+                flist.Add(_ole(f))
+
+            # 4. Получаем коллекцию DrivenObjects (управляющие объекты/точки) — DISPID 101
+            driven_objects = None
+            dyn_defn = dynamic.DumbDispatch(defn_raw)
+            try:
+                driven_objects = dyn_defn.DrivenObjects
+                if driven_objects is not None and hasattr(driven_objects, '_oleobj_'):
+                    log.info("  [POINT PATTERN] Получен DrivenObjects через dynamic dispatch .DrivenObjects")
+            except Exception:
+                pass
+
+            if driven_objects is None:
+                try:
+                    result = ole_defn.InvokeTypes(101, 0, 2, (9, 0), ())  # PROPGET
+                    if result is not None and hasattr(result, '_oleobj_'):
+                        driven_objects = result
+                        log.info("  [POINT PATTERN] Получен DrivenObjects через InvokeTypes(101)")
+                except Exception:
+                    pass
+
+            if driven_objects is None:
+                for dispid in range(0, 150):
+                    try:
+                        result = ole_defn.InvokeTypes(dispid, 0, 2, (9, 0), ())
+                        if result is not None and hasattr(result, '_oleobj_'):
+                            log.info(f"  [POINT PATTERN] DISPID {dispid} как свойство вернул: {type(result)}")
+                            driven_objects = result
+                            break
+                    except Exception:
+                        pass
+
+            if driven_objects is None or not hasattr(driven_objects, '_oleobj_'):
+                log.error("  [POINT PATTERN] Не удалось получить DrivenObjects ни одним способом")
+                raise RuntimeError("[FAIL POINT PATTERN] Не удалось получить коллекцию управляющих объектов для массива по точкам")
+
+            log.info(f"  [POINT PATTERN] Получен DrivenObjects: {type(driven_objects)}")
+
+            dlist = _wrap(K5.ksEntityCollection, driven_objects)
+            dlist.Clear()
+            for pt in points:
+                dlist.Add(_ole(pt))
+
+            # 5. Базовая точка и тип массива
+            try:
+                # BasePointType (DISPID 9) = 0 (ksCRAuto)
+                ole_defn.InvokeTypes(9, 0, 4, 0, (3,), 0)
+                # GeometryPattern (DISPID 8) = False
+                ole_defn.InvokeTypes(8, 0, 4, 0, (11,), False)
+            except Exception as e:
+                log.warning(f"  [POINT PATTERN] Не удалось установить доп. параметры: {e}")
+
+            # 6. Теперь оборачиваем сущность и вызываем Create()
+            ent = _wrap(K5.ksEntity, raw_ent)
+            created = ent.Create()
+
+            if not created:
+                log.error(f"[FAIL POINT PATTERN] Массив по точкам '{ent.name}' не построился!")
+                self.close()
+                raise RuntimeError("[FAIL POINT PATTERN] Массив по точкам не построился!")
+            self.part.Update()
+        except Exception as e:
+            log.error(f"[FAIL POINT PATTERN EXCEPTION] {e}\n{traceback.format_exc()}")
+            self.close()
+            raise
+
+        vol_after = self.volume()
+        log.info(
+            f"[POINT PATTERN OK] '{ent.name}': count={len(features)} features, {len(points)} points, "
+            f"V_before={vol_before:.2f} -> V_after={vol_after:.2f} (ΔV={vol_after - vol_before:.2f} мм³)"
+        )
+        return ent
+
+    def _find_edges_by_midpoint(self, target_x: float, target_z: float, tol: float = 1.0, vertical_only: bool = True, cylindrical_only: bool = False):
+        """Находит ребра, чьи середины близки к заданным (X, Z) координатам.
+        vertical_only=True — только вертикальные ребра (постоянные X,Z, меняющееся Y).
+        cylindrical_only=True — только цилиндрические ребра (входы в отверстия).
+        """
+        edges = []
+        part_ents = _wrap(K5.ksEntityCollection, self.part.EntityCollection(6))  # OBJ_FACE=6
+        for i in range(part_ents.GetCount()):
+            raw_f = part_ents.GetByIndex(i)
+            if raw_f is None:
+                continue
+            f = _wrap(K5.ksEntity, raw_f)
+            fdef = _wrap(K5.ksFaceDefinition, f.GetDefinition())
+            if not fdef:
+                continue
+            loops = _wrap(K5.ksLoopCollection, fdef.LoopCollection())
+            if not loops:
+                continue
+            for li in range(loops.GetCount()):
+                loop = _wrap(K5.ksLoop, loops.GetByIndex(li))
+                loop_edges = _wrap(K5.ksEdgeCollection, loop.EdgeCollection())
+                if not loop_edges:
+                    continue
+                for j in range(loop_edges.GetCount()):
+                    edge = _wrap(K5.ksEdgeDefinition, loop_edges.GetByIndex(j))
+                    if not edge:
+                        continue
+                    # Проверяем цилиндричность если нужно
+                    is_cyl = False
+                    r = 0.0
+                    try:
+                        res, h, r = edge.GetCylinderParam(0.0, 0.0)
+                        is_cyl = res and r > 0
+                    except Exception:
+                        pass
+                    if cylindrical_only and not is_cyl:
+                        continue
+                    # Находим середину ребра
+                    v1 = _wrap(K5.ksVertexDefinition, edge.GetVertex(True))
+                    v2 = _wrap(K5.ksVertexDefinition, edge.GetVertex(False))
+                    if not v1 or not v2:
+                        continue
+                    res1, x1, y1, z1 = v1.GetPoint(0.0, 0.0, 0.0)
+                    res2, x2, y2, z2 = v2.GetPoint(0.0, 0.0, 0.0)
+                    if not (res1 and res2):
+                        continue
+                    mx, my, mz = (x1 + x2) / 2.0, (y1 + y2) / 2.0, (z1 + z2) / 2.0
+                    # Проверяем вертикальность если нужно
+                    dx, dy, dz = abs(x1 - x2), abs(y1 - y2), abs(z1 - z2)
+                    is_vert = dx < 1e-4 and dz < 1e-4 and dy > 1e-4
+                    if vertical_only and not is_vert:
+                        continue
+                    # Проверяем близость к целевой точке
+                    if abs(mx - target_x) <= tol and abs(mz - target_z) <= tol:
+                        edges.append(edge)
+        return edges
+
+    def get_window_vertical_edges(self, lo: float, bo: float):
+        """Возвращает 4 вертикальных ребра углов провального окна (скругление ro).
+        Окно центрировано: углы при X=±lo/2, Z=±bo/2.
+        """
+        edges = []
+        corners = [
+            (-lo / 2.0,  bo / 2.0),
+            ( lo / 2.0,  bo / 2.0),
+            ( lo / 2.0, -bo / 2.0),
+            (-lo / 2.0, -bo / 2.0),
+        ]
+        for cx, cz in corners:
+            found = self._find_edges_by_midpoint(cx, cz, tol=2.0, vertical_only=True)
+            if found:
+                edges.append(found[0])
+            else:
+                log.warning(f"  [WINDOW EDGES] Не найдено вертикальное ребро угла окна ({cx:.1f}, {cz:.1f})")
+        return edges
+
+    def get_plate_corner_edges(self, l: float, b: float):
+        """Возвращает 4 вертикальных ребра углов плиты (фаска f).
+        Плита центрирована: углы при X=±l/2, Z=±b/2.
+        """
+        edges = []
+        corners = [
+            (-l / 2.0,  b / 2.0),
+            ( l / 2.0,  b / 2.0),
+            ( l / 2.0, -b / 2.0),
+            (-l / 2.0, -b / 2.0),
+        ]
+        for cx, cz in corners:
+            found = self._find_edges_by_midpoint(cx, cz, tol=2.0, vertical_only=True)
+            if found:
+                edges.append(found[0])
+            else:
+                log.warning(f"  [PLATE EDGES] Не найдено вертикальное ребро угла плиты ({cx:.1f}, {cz:.1f})")
+        return edges
+
+    def get_hole_entrance_edges(self, face_top, dk: float, lk: float, bk: float):
+        """Возвращает 4 круговые ребра входов в отверстия на верхней грани (фаска fo).
+        Ищет круговые ребра во внутренних контурах верхней грани.
+        """
+        edges = []
+        fdef = _wrap(K5.ksFaceDefinition, face_top.GetDefinition())
+        if not fdef:
+            return edges
+        loops = _wrap(K5.ksLoopCollection, fdef.LoopCollection())
+        if not loops:
+            return edges
+
+        # Ожидаемые центры отверстий
+        expected_centers = [
+            (-lk / 2.0,  bk / 2.0),
+            ( lk / 2.0,  bk / 2.0),
+            ( lk / 2.0, -bk / 2.0),
+            (-lk / 2.0, -bk / 2.0),
+        ]
+        expected_radius = dk / 2.0
+
+        for li in range(loops.GetCount()):
+            loop = _wrap(K5.ksLoop, loops.GetByIndex(li))
+            loop_edges = _wrap(K5.ksEdgeCollection, loop.EdgeCollection())
+            if not loop_edges or loop_edges.GetCount() != 1:
+                continue  # Ищем контуры из одного ребра (круговые)
+
+            edge = _wrap(K5.ksEdgeDefinition, loop_edges.GetByIndex(0))
+            if not edge:
+                continue
+
+            # Проверяем, что ребро круговое и находится в ожидаемом месте
+            v1 = _wrap(K5.ksVertexDefinition, edge.GetVertex(True))
+            v2 = _wrap(K5.ksVertexDefinition, edge.GetVertex(False))
+            if not v1 or not v2:
+                continue
+            res1, x1, y1, z1 = v1.GetPoint(0.0, 0.0, 0.0)
+            res2, x2, y2, z2 = v2.GetPoint(0.0, 0.0, 0.0)
+            if not (res1 and res2):
+                continue
+
+            # Для кругового ребра вершины совпадают (замкнутое ребро)
+            cx, cz = x1, z1
+            # Для кругового ребра вершины совпадают (замкнутое ребро) - точка на окружности
+            cx, cz = x1, z1
+            # Проверяем, близко ли к ожидаемым центрам с учетом радиуса
+            # Точка на окружности находится на расстоянии expected_radius от центра
+            expected_radius = dk / 2.0
+            for exp_cx, exp_cz in expected_centers:
+                dist = ((cx - exp_cx) ** 2 + (cz - exp_cz) ** 2) ** 0.5
+                if abs(dist - expected_radius) < 1.0:  # расстояние до центра ~ радиус
+                    edges.append(edge)
+                    break
+        return edges
 
     # ===================== ПЕРЕМЕННЫЕ И ВЫРАЖЕНИЯ (API7 IFeature7.Variables) =====================
     def _get_part7(self):
