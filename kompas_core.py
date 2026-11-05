@@ -95,10 +95,12 @@ OBJ_AXIS_CONICAL = 11  # o3d_axisConeFace (Ось конической/цили�
 
 OBJ_FILLET = 15  # o3d_fillet
 OBJ_CHAMFER = 16  # o3d_chamfer
-OBJ_BASE_EXTRUDE = 24  # o3d_baseExtrusion
-OBJ_BASE_ROTATE = 25  # o3d_baseRotated (Операция вращения)
-OBJ_CUT_EXTRUDE = 26  # o3d_cutExtrusion (Вырезать выдавливанием)
-OBJ_CUT_ROTATE = 27  # o3d_cutRotated (Вырезать вращением)
+OBJ_BASE_EXTRUDE = 24   # o3d_baseExtrusion
+OBJ_BOSS_EXTRUDE = 25   # o3d_bossExtrusion (Приклеить выдавливанием)
+OBJ_CUT_EXTRUDE = 26    # o3d_cutExtrusion (Вырезать выдавливанием)
+OBJ_BASE_ROTATE = 27    # o3d_baseRotated (Операция вращения)
+OBJ_BOSS_ROTATE = 28    # o3d_bossRotated (Приклеить вращением)
+OBJ_CUT_ROTATE = 29     # o3d_cutRotated (Вырезать вращением)
 OBJ_CIRCULAR_COPY = 36  # o3d_circularCopy (Массив по концентрической сетке)
 
 DT_NORMAL = 0  # Прямое направление (на расстояние)
@@ -188,6 +190,8 @@ class SketchBuilder:
         style: int = STYLE_MAIN,
     ):
         """Замкнутый многоугольник или ломаная по точкам [(x, y), ...]."""
+        if len(points) < 2:
+            return self
         for i in range(len(points) - 1):
             self.line(
                 points[i][0], points[i][1], points[i + 1][0], points[i + 1][1], style
@@ -1011,7 +1015,7 @@ class KompasPart:
         return ent
 
     def revolve(self, sketch_ent, angle: float = 360.0, cut: bool = False):
-        """Операция вращения (o3d_baseRotated = 25) или выреза вращением (o3d_cutRotated = 27)."""
+        """Операция вращения (o3d_baseRotated = 27) или выреза вращением (o3d_cutRotated = 29)."""
         vol_before = self.volume()
         obj_type = OBJ_CUT_ROTATE if cut else OBJ_BASE_ROTATE
         ent = _wrap(K5.ksEntity, self.part.NewEntity(obj_type))
@@ -1019,10 +1023,15 @@ class KompasPart:
             defn = _wrap(K5.ksCutRotatedDefinition, ent.GetDefinition())
         else:
             defn = _wrap(K5.ksBaseRotatedDefinition, ent.GetDefinition())
-        defn.directionType = DT_NORMAL
-        defn.SetSideParam(True, float(angle))
-        sketch_def = _wrap(K5.ksSketchDefinition, sketch_ent.GetDefinition())
-        defn._oleobj_.InvokeTypes(3, 0, 1, (11, 0), ((9, 0),), _ole(sketch_def))
+        # Для выреза вращением направление должно быть обратным (DT_REVERSE),
+        # чтобы контур определял удаляемый материал, а не оставляемый
+        defn.directionType = DT_REVERSE if cut else DT_NORMAL
+        # ksBaseRotatedDefinition.SetSideParam(side, angle) — 2 параметра (как у cut)
+        # ksCutRotatedDefinition.SetSideParam(side, angle) — 2 параметра
+        dyn_defn = dynamic.DumbDispatch(defn._oleobj_)
+        dyn_defn.SetSideParam(True, float(angle))
+        # Назначаем эскиз — передаем саму сущность эскиза (ksEntity)
+        dyn_defn.SetSketch(_ole(sketch_ent))
         if not ent.Create():
             log.error(f"[FAIL REVOLVE] Операция вращения '{ent.name}' не построилась!")
             self.close()
