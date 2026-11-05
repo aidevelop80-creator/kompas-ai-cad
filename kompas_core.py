@@ -576,10 +576,14 @@ class KompasPart:
         parametritic constraint, чтобы размер стал driving.
         """
         dobj = _wrap(K7.IDrawingObject1, dim_obj)
-        # Пробуем все возможные коды параметрического ограничения для размера (0..100)
+        # Пробуем все возможные коды параметрического ограничения для размера (0..100).
+        # КРИТИЧНО: не прерываемся на первом Create() — ищем тип, где И Create(),
+        # И Expression устанавливается. Только такой комбинацией размер становится
+        # управляющим (driving), а не информационным.
         # Диаметральные размеры обычно принимают тип 1 (Horizontal),
         # линейные размеры могут требовать иные типы (0..100).
-        accepted_codes = []
+        best_ctype = None
+        best_con = None
         for ctype in range(101):
             try:
                 con = _wrap(K7.IParametriticConstraint, dobj.NewConstraint())
@@ -590,26 +594,27 @@ class KompasPart:
                     if expr_str:
                         try:
                             con.Expression = str(expr_str)
+                            best_ctype = ctype
+                            best_con = con
+                            break  # Нашли тип, где и Create, и Expression работают → размер управляющий
                         except Exception:
-                            pass
-                    accepted_codes.append(ctype)
-                    dim_obj.Update()
-                    break
+                            # Expression не применился для этого типа — пробуем следующий
+                            continue
+                    else:
+                        best_ctype = ctype
+                        best_con = con
+                        break
             except Exception:
                 continue
-        if accepted_codes:
+        if best_con is not None:
+            dim_obj.Update()
             log.debug(
-                f"  [API7 DIM CONSTRAINT] Размер принял ConstraintType={accepted_codes} (expr='{expr_str}')"
+                f"  [API7 DIM CONSTRAINT] Размер сделан управляющим ConstraintType={best_ctype} (expr='{expr_str}')"
             )
         else:
-            # Проверяем существующие ограничения объекта dobj.Constraints
-            try:
-                cons = dobj.Constraints
-                log.debug(f"  [API7 DIM CONSTRAINT] dobj.Constraints = {cons}")
-            except Exception as e:
-                log.debug(
-                    f"  [API7 DIM CONSTRAINT] Нет принятых ConstraintType (0..100), err={e}"
-                )
+            log.debug(
+                f"  [API7 DIM CONSTRAINT] Не найден тип ограничения с поддержкой Expression для размера"
+            )
 
     def _apply_api7_sketch_dims_and_constraints(self, sk_ent, builder: SketchBuilder):
         """
