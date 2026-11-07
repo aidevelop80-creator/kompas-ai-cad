@@ -414,16 +414,30 @@ class KompasPart:
             plane = p_map.get(plane.lower().strip(), PLANE_XY)
         return _wrap(K5.ksEntity, self.part.GetDefaultEntity(plane))
 
-    def create_offset_plane(self, base_plane: str | int, offset: float):
-        """Создает смещенную плоскость параллельно базовой."""
-        base_ent = (
-            self.get_base_plane(base_plane)
-            if isinstance(base_plane, (str, int))
-            else base_plane
-        )
+    def create_offset_plane(self, base_plane: str | int | object, offset: float):
+        """Создает смещенную плоскость параллельно базовой.
+        base_plane: имя базовой плоскости ("xy", "xz", "yz"), её тип (int), или ksEntity грани/плоскости.
+        """
+        # Если передан ksEntity (грань или плоскость), используем его напрямую
+        if not isinstance(base_plane, (str, int)):
+            base_ent_raw = _ole(base_plane)
+        else:
+            # Получаем базовую плоскость как сырой COM-объект
+            if isinstance(base_plane, str):
+                p_map = {
+                    "xy": PLANE_XY, "xoy": PLANE_XY, "yx": PLANE_XY,
+                    "xz": PLANE_XZ, "xoz": PLANE_XZ, "zx": PLANE_XZ,
+                    "yz": PLANE_YZ, "yoz": PLANE_YZ, "zy": PLANE_YZ,
+                }
+                plane_type = p_map.get(base_plane.lower().strip(), PLANE_XY)
+            else:
+                plane_type = base_plane
+            base_ent_raw = self.part.GetDefaultEntity(plane_type)
+
         ent = _wrap(K5.ksEntity, self.part.NewEntity(OBJ_PLANE_OFFSET))
         defn = _wrap(K5.ksPlaneOffsetDefinition, ent.GetDefinition())
-        defn.SetPlane(_ole(base_ent))
+        # Передаем сырой COM-объект базовой плоскости/грани
+        defn.SetPlane(base_ent_raw)
         defn.direction = True if offset >= 0 else False
         defn.offset = abs(float(offset))
         if not ent.Create():
@@ -466,6 +480,27 @@ class KompasPart:
         log.info(f"Создана конструктивная ось по цилиндрической грани: '{ent.name}'")
         return ent
 
+    def create_plane_by_3_points(self, p1: tuple, p2: tuple, p3: tuple):
+        """Создает плоскость по 3 точкам (o3d_plane3Points = 16).
+        p1, p2, p3 — кортежи (x, y, z) координат точек.
+        """
+        ent = _wrap(K5.ksEntity, self.part.NewEntity(16))  # OBJ_PLANE_3POINTS = 16
+        defn = _wrap(K5.ksPlane3PointsDefinition, ent.GetDefinition())
+        # Создаем 3 точки
+        pt1 = self.create_point3d(p1[0], p1[1], p1[2])
+        pt2 = self.create_point3d(p2[0], p2[1], p2[2])
+        pt3 = self.create_point3d(p3[0], p3[1], p3[2])
+        defn.SetPoint(1, _ole(pt1))
+        defn.SetPoint(2, _ole(pt2))
+        defn.SetPoint(3, _ole(pt3))
+        if not ent.Create():
+            log.error(f"[FAIL PLANE 3PTS] Не удалось создать плоскость по 3 точкам!")
+            self.close()
+            raise RuntimeError("[FAIL PLANE 3PTS] Не удалось создать плоскость по 3 точкам!")
+        self.part.Update()
+        log.info(f"Создана плоскость по 3 точкам: '{ent.name}'")
+        return ent
+
     def _find_feature7_by_name(self, name: str):
         """Находит IFeature7 в дереве модели по имени (очищенному от (+)/(-))."""
         part7 = self._get_part7()
@@ -486,53 +521,24 @@ class KompasPart:
         return None
 
     def create_point3d(self, x: float, y: float, z: float):
-        """Создает пространственную точку (o3d_point3D = 70) по координатам через API7 IPoint3D."""
+        """Создает пространственную точку (o3d_point3D = 70) по координатам через API5 определение."""
         # 1. Создаём сущность через API5
         ent = _wrap(K5.ksEntity, self.part.NewEntity(OBJ_POINT_3D))
+        defn_raw = ent.GetDefinition()
+        dyn_defn = dynamic.DumbDispatch(defn_raw)
+
+        # 2. Настраиваем определение ТЕРЕД Create
+        dyn_defn.ParameterType = 1  # ksPParamCoord = 1
+        dyn_defn.X = float(x)
+        dyn_defn.Y = float(y)
+        dyn_defn.Z = float(z)
+
+        # 3. Создаём точку
         if not ent.Create():
             log.error(f"[FAIL POINT3D] Не удалось создать сущность точки в ({x}, {y}, {z})!")
             raise RuntimeError("[FAIL POINT3D] Не удалось создать пространственную точку!")
         self.part.Update()
 
-        # 2. Находим соответствующий IFeature7 и оборачиваем как IPoint3D
-        # Имя сущности в дереве может отличаться — ищем последнюю добавленную точку
-        point7 = None
-        part7 = self._get_part7()
-        if part7:
-            feat7_root = _wrap(K7.IFeature7, part7)
-            raw_sub = feat7_root.SubFeatures(0, True, False)
-            sub_list = (
-                raw_sub
-                if isinstance(raw_sub, (list, tuple))
-                else ([raw_sub] if raw_sub else [])
-            )
-            # Идём с конца, так как точка только что создалась
-            for item in reversed(sub_list):
-                sf = _wrap(K7.IFeature7, item)
-                # Проверяем, что это точка (o3d_point3D = 70)
-                try:
-                    if sf.Type == 70:
-                        point7 = _wrap(K7.IPoint3D, sf)
-                        break
-                except Exception:
-                    continue
-
-        if point7 is None:
-            log.error("[FAIL POINT3D] Не удалось получить IPoint3D для созданной точки!")
-            raise RuntimeError("[FAIL POINT3D] Не удалось получить интерфейс IPoint3D!")
-
-        # 3. Настраиваем через API7: тип = по координатам (1), координаты X, Y, Z
-        try:
-            point7.ParameterType = 1  # ksPParamCoord
-            point7.X = float(x)
-            point7.Y = float(y)
-            point7.Z = float(z)
-            point7.Update()
-        except Exception as e:
-            log.error(f"[FAIL POINT3D] Ошибка установки параметров: {e}")
-            raise RuntimeError(f"[FAIL POINT3D] Ошибка настройки точки: {e}")
-
-        self.part.Update()
         log.info(f"Создана пространственная точка: '{ent.name}' ({x:.2f}, {y:.2f}, {z:.2f})")
         return ent
 
