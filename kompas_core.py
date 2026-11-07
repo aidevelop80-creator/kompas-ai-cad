@@ -105,6 +105,22 @@ OBJ_BOSS_ROTATE = 28    # o3d_bossRotated (Приклеить вращением
 OBJ_CUT_ROTATE = 29     # o3d_cutRotated (Вырезать вращением)
 OBJ_CIRCULAR_COPY = 36  # o3d_circularCopy (Массив по концентрической сетке)
 
+# Sheet Metal objects
+OBJ_SHEET_METAL_BODY = 74      # o3d_sheetMetalBody
+OBJ_SHEET_METAL_BEND = 75      # o3d_sheetMetalBend
+OBJ_SHEET_METAL_LINE_BEND = 76 # o3d_sheetMetalLineBend
+OBJ_SHEET_METAL_HOLE = 77      # o3d_sheetMetalHole
+OBJ_SHEET_METAL_CUT = 78       # o3d_sheetMetalCut
+OBJ_SHEET_METAL_CLOSED_CORNER = 539  # o3d_sheetMetalClosedCorner
+OBJ_SHEET_METAL_BODY = 74    # o3d_sheetMetalBody
+OBJ_SHEET_METAL_BEND = 75    # o3d_sheetMetalBend
+OBJ_SHEET_METAL_LINE_BEND = 76  # o3d_sheetMetalLineBend
+OBJ_SHEET_METAL_HOLE = 77      # o3d_sheetMetalHole
+OBJ_SHEET_METAL_CUT = 78       # o3d_sheetMetalCut
+OBJ_SURFACE_SEW = 96           # o3d_SurfaceSewer
+OBJ_RULED_SURFACE = 515        # o3d_RuledSurface
+OBJ_CORNER_RELIEF = 539        # o3d_sheetMetalClosedCorner
+
 DT_NORMAL = 0  # Прямое направление (на расстояние)
 DT_REVERSE = 1  # Обратное направление
 DT_BOTH = 2  # В оба направления
@@ -1298,6 +1314,257 @@ class KompasPart:
         )
         return ent
 
+    # ===================== SHEET METAL (ЛИСТОВЫЙ МЕТАЛЛ) =====================
+
+    def create_sheet_metal_body(
+        self,
+        sketch_ent,
+        thickness_var: str = "t",
+        bend_radius_var: str = "R_bend",
+        k_factor_var: str = "K_factor",
+        thickness_direction: bool = True,
+        thickness_expr: str = None,
+        bend_radius_expr: str = None,
+        k_factor_expr: str = None,
+    ):
+        """Создает тело листового металла (o3d_sheetMetalBody = 74) из эскиза."""
+        vol_before = self.volume()
+        vars_before = set(self._get_all_feature_var_names())
+
+        raw_ent = self.part.NewEntity(OBJ_SHEET_METAL_BODY)
+        ole_ent = _ole(raw_ent)
+
+        # Получаем определение через InvokeTypes (DISPID 6 — Definition)
+        defn_raw = None
+        for dispid in (6, 11):
+            try:
+                result = ole_ent.InvokeTypes(dispid, 0, 2, (9, 0), ())  # PROPGET
+                if result is not None and hasattr(result, '_oleobj_'):
+                    defn_raw = result
+                    log.info(f"  [SHEET METAL] Получено определение через DISPID {dispid}: {type(defn_raw)}")
+                    break
+            except Exception as e:
+                log.debug(f"  [SHEET METAL] DISPID {dispid} error: {e}")
+                pass
+
+        if defn_raw is None:
+            log.error("  [SHEET METAL] Не удалось получить определение через InvokeTypes!")
+            raise RuntimeError("[FAIL SHEET METAL] Не удалось получить определение тела листового металла!")
+
+        dyn_defn = dynamic.DumbDispatch(defn_raw)
+        ole_ent = _ole(raw_ent)
+        ent = _wrap(K5.ksEntity, raw_ent)
+
+        # Настраиваем базовые параметры через сырой COM
+        dyn_defn.SetSketch(_ole(sketch_ent))
+        dyn_defn.ThicknessDirection = thickness_direction
+        dyn_defn.Straighten = False
+
+        if not ent.Create():
+            log.error(f"[FAIL SHEET METAL] Тело листового металла '{ent.name}' не построилось!")
+            self.close()
+            raise RuntimeError("[FAIL SHEET METAL] Тело листового металла не построилось!")
+        self.part.Update()
+
+        # Привязываем формулы к переменным толщины, радиуса, K-factor
+        if thickness_expr:
+            thickness_val = float(dyn_defn.Thickness)
+            self._bind_new_vars_to_expressions(
+                vars_before, [(thickness_val, thickness_expr)], context=f"{ent.name}.Thickness"
+            )
+        if bend_radius_expr:
+            radius_val = float(dyn_defn.BendRadius)
+            self._bind_new_vars_to_expressions(
+                vars_before, [(radius_val, bend_radius_expr)], context=f"{ent.name}.Radius"
+            )
+        if k_factor_expr:
+            k_val = float(dyn_defn.KFactor)
+            self._bind_new_vars_to_expressions(
+                vars_before, [(k_val, k_factor_expr)], context=f"{ent.name}.KFactor"
+            )
+
+        self.part.RebuildModel()
+        self.part.Update()
+
+        vol_after = self.volume()
+        log.info(
+            f"[SHEET METAL BODY OK] '{ent.name}': thickness={thickness_expr}, "
+            f"radius={bend_radius_expr}, k_factor={k_factor_expr}, "
+            f"V_before={vol_before:.2f} -> V_after={vol_after:.2f} (ΔV={vol_after - vol_before:.2f} мм³)"
+        )
+        return ent
+
+    def add_bend(
+        self,
+        face_entity,
+        length_var: str = "H_flange",
+        bend_radius_var: str = "R_bend",
+        angle_var: str = "Bend_Angle",
+        k_factor_var: str = "K_factor",
+        bend_allowance_var: str = "BA",
+        bend_deduction_var: str = "BD",
+        relief_h_var: str = "Relief_H",
+        relief_w_var: str = "Relief_W",
+        direction: bool = True,
+        disposal: int = 0,
+        length_type: int = 0,
+        offset_type: int = 0,
+        side_type: int = 0,
+        bend_release: int = 0,
+        dismissal_width: float = None,
+        dismissal_depth: float = None,
+        dismissal_angle_type: int = 0,
+        length_expr: str = None,
+        radius_expr: str = None,
+        angle_expr: str = None,
+        k_factor_expr: str = None,
+        ba_expr: str = None,
+        bd_expr: str = None,
+        relief_h_expr: str = None,
+        relief_w_expr: str = None,
+    ):
+        """Добавляет сгиб (o3d_sheetMetalBend = 75) к грани листового тела."""
+        vol_before = self.volume()
+        vars_before = set(self._get_all_feature_var_names())
+
+        raw_ent = self.part.NewEntity(OBJ_SHEET_METAL_BEND)
+        defn_raw = raw_ent.GetDefinition()
+        dyn_defn = dynamic.DumbDispatch(defn_raw)
+        ent = _wrap(K5.ksEntity, raw_ent)
+
+        defn_raw.SetBendObject(_ole(face_entity))
+        dyn_defn.Direction = direction
+        dyn_defn.Disposal = disposal
+        dyn_defn.LengthType = length_type
+        dyn_defn.OffsetType = offset_type
+        dyn_defn.LeftSideType = side_type
+        dyn_defn.RightSideType = side_type
+        dyn_defn.BendRelease = bend_release
+        dyn_defn.Straighten = False
+
+        if dismissal_width is not None:
+            dyn_defn.DismissalWidth = dismissal_width
+            dyn_defn.DismissalWithWidth = True
+        if dismissal_depth is not None:
+            dyn_defn.DismissalDepth = dismissal_depth
+        dyn_defn.DismissalAngleType = dismissal_angle_type
+
+        if not ent.Create():
+            log.error(f"[FAIL BEND] Сгиб '{ent.name}' не построился!")
+            self.close()
+            raise RuntimeError("[FAIL BEND] Сгиб не построился!")
+        self.part.Update()
+
+        # Привязываем формулы
+        pending = []
+        if length_expr:
+            pending.append((float(dyn_defn.Length), length_expr))
+        if radius_expr:
+            pending.append((float(dyn_defn.BendRadius), radius_expr))
+        if angle_expr:
+            pending.append((float(dyn_defn.BendAngle), angle_expr))
+        if k_factor_expr:
+            pending.append((float(dyn_defn.KFactor), k_factor_expr))
+        if ba_expr:
+            pending.append((float(dyn_defn.BendAllowance), ba_expr))
+        if bd_expr:
+            pending.append((float(dyn_defn.BendDeduction), bd_expr))
+        if relief_h_expr:
+            pending.append((float(dyn_defn.DismissalDepth), relief_h_expr))
+        if relief_w_expr:
+            pending.append((float(dyn_defn.DismissalWidth), relief_w_expr))
+
+        if pending:
+            self._bind_new_vars_to_expressions(vars_before, pending, context=ent.name)
+            self.part.RebuildModel()
+            self.part.Update()
+
+        vol_after = self.volume()
+        log.info(
+            f"[BEND OK] '{ent.name}': length={length_expr}, radius={radius_expr}, angle={angle_expr}, "
+            f"V_before={vol_before:.2f} -> V_after={vol_after:.2f} (ΔV={vol_after - vol_before:.2f} мм³)"
+        )
+        return ent
+
+    def close_corners(self, corner_type: int = 0, gap: float = 0.1):
+        """Замыкает углы листового тела (o3d_sheetMetalClosedCorner = 539)."""
+        vol_before = self.volume()
+
+        raw_ent = self.part.NewEntity(OBJ_SHEET_METAL_CLOSED_CORNER)
+        defn_raw = raw_ent.GetDefinition()
+        dyn_defn = dynamic.DumbDispatch(defn_raw)
+        ent = _wrap(K5.ksEntity, raw_ent)
+
+        # Получаем все сгибы для замыкания
+        container = _wrap(K5.ksEntity, self.part.GetSheetMetalContainer())
+        dyn_container = dynamic.DumbDispatch(container._oleobj_)
+        bends = dyn_container.SheetMetalBends
+
+        bend_collection = dyn_defn.Bends
+        for i in range(bends.Count):
+            bend = bends.Item(i)
+            bend_collection.Add(_ole(bend))
+
+        dyn_defn.Gap = gap
+
+        if not ent.Create():
+            log.error(f"[FAIL CLOSE CORNERS] Замыкание углов '{ent.name}' не построилось!")
+            self.close()
+            raise RuntimeError("[FAIL CLOSE CORNERS] Замыкание углов не построилось!")
+        self.part.Update()
+
+        vol_after = self.volume()
+        log.info(
+            f"[CLOSE CORNERS OK] '{ent.name}': gap={gap}, "
+            f"V_before={vol_before:.2f} -> V_after={vol_after:.2f} (ΔV={vol_after - vol_before:.2f} мм³)"
+        )
+        return ent
+
+    def sheet_metal_cut(
+        self,
+        sketch_ent,
+        cut_type: int = 0,
+        depth: float = 10.0,
+        depth_expr: str = None,
+        body_entity: any = None,
+    ):
+        """Вырезает в листовом теле по эскизу (o3d_sheetMetalCut = 78)."""
+        vol_before = self.volume()
+        vars_before = set(self._get_all_feature_var_names())
+
+        raw_ent = self.part.NewEntity(OBJ_SHEET_METAL_CUT)
+        defn_raw = raw_ent.GetDefinition()
+        dyn_defn = dynamic.DumbDispatch(defn_raw)
+        ent = _wrap(K5.ksEntity, raw_ent)
+
+        defn_raw.SetSketch(_ole(sketch_ent))
+        dyn_defn.CutType = cut_type
+        dyn_defn.Depth = float(depth)
+        dyn_defn.Cut = True
+
+        if body_entity:
+            defn_raw.SetBody(_ole(body_entity))
+
+        if not ent.Create():
+            log.error(f"[FAIL SHEET METAL CUT] Вырез в листовом теле '{ent.name}' не построился!")
+            self.close()
+            raise RuntimeError("[FAIL SHEET METAL CUT] Вырез в листовом теле не построился!")
+        self.part.Update()
+
+        if depth_expr:
+            self._bind_new_vars_to_expressions(
+                vars_before, [(float(depth), depth_expr)], context=ent.name
+            )
+            self.part.RebuildModel()
+            self.part.Update()
+
+        vol_after = self.volume()
+        log.info(
+            f"[SHEET METAL CUT OK] '{ent.name}': depth={depth_expr or depth}, "
+            f"V_before={vol_before:.2f} -> V_after={vol_after:.2f} (ΔV={vol_after - vol_before:.2f} мм³)"
+        )
+        return ent
+
     def fillet(self, edges: list, radius: float, expr: str = None):
         """Скругление ребер (o3d_fillet = 34)."""
         vol_before = self.volume()
@@ -1370,161 +1637,70 @@ class KompasPart:
         )
         return ent
 
-    def point_pattern(self, features: list, points: list):
-        """Массив по точкам (o3d_PointDrivenPattern = 507).
-        points — список точек-экземпляров (ksEntity типа o3d_point3D = 70) или вершин."""
+    def create_connection_surface(self, edges, tension1: float = 50.0, tension2: float = 50.0):
+        """Поверхность соединения (Connection Surface / Lofted Surface) по ребрам.
+        edges — список ребер, по которым строится поверхность.
+        tension1, tension2 — натяжение (0-100)."""
         vol_before = self.volume()
 
-        try:
-            ent = _wrap(K5.ksEntity, self.part.NewEntity(OBJ_POINT_PATTERN))
-            defn_raw = ent.GetDefinition()
-            ole_defn = defn_raw._oleobj_ if hasattr(defn_raw, '_oleobj_') else defn_raw
-            log.info(f"  [POINT PATTERN] Definition raw object: {type(ole_defn)}")
+        ent = _wrap(K5.ksEntity, self.part.NewEntity(OBJ_LOFT))
+        defn = _wrap(K5.ksLoftDefinition, ent.GetDefinition())
+        # Добавление сечений (ребер) через array()
+        dyn_defn = dynamic.DumbDispatch(defn._oleobj_)
+        arr = dyn_defn.array()
+        for edge in edges:
+            arr.Add(_ole(edge))
+        dyn_defn.Tension1 = tension1
+        dyn_defn.Tension2 = tension2
 
-            # Получаем массив операций через перебор DISPID
-            op_array = None
-            for dispid in range(0, 50):
-                try:
-                    result = ole_defn.InvokeTypes(dispid, 0, 1, (9, 0), ())
-                    if result is not None and hasattr(result, '_oleobj_'):
-                        log.info(f"  [POINT PATTERN] DISPID {dispid} как метод вернул COM object: {type(result)}")
-                        op_array = result
-                        break
-                except Exception:
-                    pass
-                try:
-                    result = ole_defn.InvokeTypes(dispid, 0, 2, (9, 0), ())
-                    if result is not None and hasattr(result, '_oleobj_'):
-                        log.info(f"  [POINT PATTERN] DISPID {dispid} как свойство вернул COM object: {type(result)}")
-                        op_array = result
-                        break
-                except Exception:
-                    pass
-
-            if op_array is None:
-                dyn_defn = dynamic.DumbDispatch(defn_raw)
-                try:
-                    op_array = dyn_defn.OperationArray
-                    if op_array is not None and hasattr(op_array, '_oleobj_'):
-                        log.info("  [POINT PATTERN] Получен OperationArray через dynamic dispatch .OperationArray")
-                except Exception:
-                    pass
-                if op_array is None:
-                    try:
-                        op_array = dyn_defn.GetOperationArray
-                        if op_array is not None and hasattr(op_array, '_oleobj_'):
-                            log.info("  [POINT PATTERN] Получен OperationArray через dynamic dispatch .GetOperationArray")
-                    except Exception:
-                        pass
-
-            if op_array is None or not hasattr(op_array, '_oleobj_'):
-                log.error("  [POINT PATTERN] Не удалось получить OperationArray ни одним способом")
-                raise RuntimeError("[FAIL POINT PATTERN] Не удалось получить массив операций для массива по точкам")
-
-            log.info(f"  [POINT PATTERN] Получен OperationArray: {type(op_array)}")
-
-            flist = _wrap(K5.ksEntityCollection, op_array)
-            flist.Clear()
-            for f in features:
-                flist.Add(_ole(f))
-
-            # Получаем массив точек для паттерна
-            # Пробуем найти DISPID для Points/ExemplarPoints
-            points_array = None
-            for dispid in range(0, 50):
-                try:
-                    result = ole_defn.InvokeTypes(dispid, 0, 1, (9, 0), ())
-                    if result is not None and hasattr(result, '_oleobj_'):
-                        # Проверяем, похож ли это на массив точек
-                        log.info(f"  [POINT PATTERN] DISPID {dispid} как метод вернул: {type(result)}")
-                        points_array = result
-                        break
-                except Exception:
-                    pass
-                try:
-                    result = ole_defn.InvokeTypes(dispid, 0, 2, (9, 0), ())
-                    if result is not None and hasattr(result, '_oleobj_'):
-                        log.info(f"  [POINT PATTERN] DISPID {dispid} как свойство вернул: {type(result)}")
-                        points_array = result
-                        break
-                except Exception:
-                    pass
-
-            if points_array is None:
-                # Пробуем через dynamic dispatch
-                dyn_defn = dynamic.DumbDispatch(defn_raw)
-                try:
-                    points_array = dyn_defn.Points
-                    if points_array is not None and hasattr(points_array, '_oleobj_'):
-                        log.info("  [POINT PATTERN] Получен Points через dynamic dispatch .Points")
-                except Exception:
-                    pass
-                if points_array is None:
-                    try:
-                        points_array = dyn_defn.ExemplarPoints
-                        if points_array is not None and hasattr(points_array, '_oleobj_'):
-                            log.info("  [POINT PATTERN] Получен ExemplarPoints через dynamic dispatch .ExemplarPoints")
-                    except Exception:
-                        pass
-
-            if points_array is None or not hasattr(points_array, '_oleobj_'):
-                log.error("  [POINT PATTERN] Не удалось получить массив точек для паттерна")
-                raise RuntimeError("[FAIL POINT PATTERN] Не удалось получить массив точек для массива по точкам")
-
-            plist = _wrap(K5.ksEntityCollection, points_array)
-            plist.Clear()
-            for pt in points:
-                plist.Add(_ole(pt))
-
-            created = ent.Create()
-
-            if not created:
-                log.error(f"[FAIL POINT PATTERN] Массив по точкам '{ent.name}' не построился!")
-                self.close()
-                raise RuntimeError("[FAIL POINT PATTERN] Массив по точкам не построился!")
-            self.part.Update()
-        except Exception as e:
-            log.error(f"[FAIL POINT PATTERN EXCEPTION] {e}\n{traceback.format_exc()}")
+        if not ent.Create():
+            log.error(f"[FAIL CONNECTION SURFACE] Поверхность соединения не построилась!")
             self.close()
-            raise
-
-        vol_after = self.volume()
-        log.info(
-            f"[POINT PATTERN OK] '{ent.name}': count={len(features)} features, {len(points)} points, "
-            f"V_before={vol_before:.2f} -> V_after={vol_after:.2f} (ΔV={vol_after - vol_before:.2f} мм³)"
-        )
+            raise RuntimeError("[FAIL CONNECTION SURFACE] Поверхность соединения не построилась!")
+        self.part.Update()
+        log.info(f"[CONNECTION SURFACE OK] '{ent.name}' создана")
         return ent
 
-    def get_sketch_points(self, sketch_ent):
-        """Возвращает список 2D-точек эскиза (ksPoint) как COM-объекты для использования в массиве по точкам.
-        Эскиз должен быть на плоской грани — тогда 2D-точки имеют 3D-позицию на этой грани.
-        """
-        sk_feat7 = self._find_sketch_feature7(sketch_ent)
-        if sk_feat7 is None:
-            log.warning(f"  [SKETCH POINTS] Не найден IFeature7 для '{sketch_ent.name}'")
-            return []
+    def create_ruled_surface(self, edges, tension1: float = 50.0, tension2: float = 50.0):
+        """Линейчатая поверхность (Ruled Surface) по ребрам (o3d_RuledSurface = 515)."""
+        vol_before = self.volume()
+        ent = _wrap(K5.ksEntity, self.part.NewEntity(OBJ_RULED_SURFACE))
+        defn = _wrap(K5.ksRuledSurfaceDefinition, ent.GetDefinition())
+        dyn_defn = dynamic.DumbDispatch(defn._oleobj_)
+        arr = dyn_defn.array()
+        for edge in edges:
+            arr.Add(_ole(edge))
+        dyn_defn.Tension1 = tension1
+        dyn_defn.Tension2 = tension2
 
-        try:
-            sk7 = _wrap(K7.ISketch, sk_feat7)
-            doc2d_7 = _wrap(K7.IKompasDocument2D, sk7.BeginEdit())
-            try:
-                v_mgr = _wrap(K7.IViewsAndLayersManager, doc2d_7.ViewsAndLayersManager)
-                views = _wrap(K7.IViews, v_mgr.Views)
-                v0 = _wrap(K7.IView, views.ActiveView)
-                dc = _wrap(K7.IDrawingContainer, v0)
+        if not ent.Create():
+            log.error(f"[FAIL RULED SURFACE] Линейчатая поверхность не построилась!")
+            self.close()
+            raise RuntimeError("[FAIL RULED SURFACE] Линейчатая поверхность не построилась!")
+        self.part.Update()
+        log.info(f"[RULED SURFACE OK] '{ent.name}' создана")
+        return ent
 
-                points_2d = _wrap(K7.IPoints, dc.Points)
-                pts = []
-                for i in range(points_2d.Count):
-                    pt = _wrap(K7.IPoint, points_2d.Point(i))
-                    pts.append(pt)
-                log.info(f"  [SKETCH POINTS] Найдено 2D-точек в эскизе '{sketch_ent.name}': {len(pts)}")
-                return pts
-            finally:
-                sk7.EndEdit()
-        except Exception as e:
-            log.error(f"  [SKETCH POINTS] Ошибка получения точек: {e}")
-            return []
+    def sew_surfaces(self, surfaces, tolerance: float = 0.01):
+        """Сшивка поверхностей (Surface Sew) (o3d_SurfaceSewer = 96).
+        surfaces — список поверхностей (faces/surfaces) для сшивки.
+        tolerance — точность сшивки."""
+        vol_before = self.volume()
+        ent = _wrap(K5.ksEntity, self.part.NewEntity(OBJ_SURFACE_SEW))
+        defn = _wrap(K5.ksSurfaceSewerDefinition, ent.GetDefinition())
+        dyn_defn = dynamic.DumbDispatch(defn._oleobj_)
+        arr = dyn_defn.array()
+        for surf in surfaces:
+            arr.Add(_ole(surf))
+        dyn_defn.Tolerance = tolerance
+
+        if not ent.Create():
+            log.error(f"[FAIL SURFACE SEW] Сшивка поверхностей не построилась!")
+            self.close()
+            raise RuntimeError("[FAIL SURFACE SEW] Сшивка поверхностей не построилась!")
+        self.part.Update()
+        log.info(f"[SURFACE SEW OK] Сшивка '{ent.name}' создана")
+        return ent
 
     def point_pattern(self, features: list, points: list):
         """Массив по точкам (o3d_PointDrivenPattern = 507).
@@ -1825,6 +2001,19 @@ class KompasPart:
                     edges.append(edge)
                     break
         return edges
+
+    def _get_var_value(self, var_name: str) -> float:
+        """Получить значение переменной по имени (из таблицы переменных детали)."""
+        part7 = self._get_part7()
+        if not part7:
+            raise RuntimeError(f"[FAIL VAR] Не удалось получить IPart7 для чтения переменной '{var_name}'")
+        try:
+            var = part7.Variable(var_name)
+            if var is None:
+                raise RuntimeError(f"[FAIL VAR] Переменная '{var_name}' не найдена в таблице переменных")
+            return float(var.Value)
+        except Exception as e:
+            raise RuntimeError(f"[FAIL VAR] Ошибка чтения переменной '{var_name}': {e}")
 
     # ===================== ПЕРЕМЕННЫЕ И ВЫРАЖЕНИЯ (API7 IFeature7.Variables) =====================
     def _get_part7(self):
