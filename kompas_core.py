@@ -105,6 +105,11 @@ OBJ_BOSS_ROTATE = 28    # o3d_bossRotated (Приклеить вращением
 OBJ_CUT_ROTATE = 29     # o3d_cutRotated (Вырезать вращением)
 OBJ_CIRCULAR_COPY = 36  # o3d_circularCopy (Массив по концентрической сетке)
 
+# Additional objects
+OBJ_LOFT = 30  # o3d_baseLoft
+OBJ_RULED_SURFACE = 515  # o3d_RuledSurface
+OBJ_SURFACE_SEW = 96  # o3d_SurfaceSewer
+
 # Sheet Metal objects
 OBJ_SHEET_METAL_BODY = 74      # o3d_sheetMetalBody
 OBJ_SHEET_METAL_BEND = 75      # o3d_sheetMetalBend
@@ -112,14 +117,7 @@ OBJ_SHEET_METAL_LINE_BEND = 76 # o3d_sheetMetalLineBend
 OBJ_SHEET_METAL_HOLE = 77      # o3d_sheetMetalHole
 OBJ_SHEET_METAL_CUT = 78       # o3d_sheetMetalCut
 OBJ_SHEET_METAL_CLOSED_CORNER = 539  # o3d_sheetMetalClosedCorner
-OBJ_SHEET_METAL_BODY = 74    # o3d_sheetMetalBody
-OBJ_SHEET_METAL_BEND = 75    # o3d_sheetMetalBend
-OBJ_SHEET_METAL_LINE_BEND = 76  # o3d_sheetMetalLineBend
-OBJ_SHEET_METAL_HOLE = 77      # o3d_sheetMetalHole
-OBJ_SHEET_METAL_CUT = 78       # o3d_sheetMetalCut
-OBJ_SURFACE_SEW = 96           # o3d_SurfaceSewer
-OBJ_RULED_SURFACE = 515        # o3d_RuledSurface
-OBJ_CORNER_RELIEF = 539        # o3d_sheetMetalClosedCorner
+OBJ_CORNER_RELIEF = 539        # o3d_sheetMetalClosedCorner (alias)
 
 DT_NORMAL = 0  # Прямое направление (на расстояние)
 DT_REVERSE = 1  # Обратное направление
