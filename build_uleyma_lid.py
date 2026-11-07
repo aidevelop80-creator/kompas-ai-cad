@@ -211,14 +211,39 @@ def main():
 
     part.cut(sketch_holes, depth=50.0, direction=DT_NORMAL, through_all=True)
 
-    # Side holes on front wall (Y+ wall)
-    front_face = part.get_planar_face_at(axis="y", coord=27.1, mode="max")
-    sk_side = part.create_sketch_on_face(front_face, lambda b: (
-        b.circle(-32.0, 10.0, 1.8),
-        b.dim_diam(-32.0, 10.0, 1.8, angle_deg=45.0, var_name="D_side_hole"),
-        b.circle(32.0, 10.0, 1.8),
-        b.dim_diam(32.0, 10.0, 1.8, angle_deg=45.0, var_name="D_side_hole"),
-    ))
+    # ============================================================
+    # Боковые отверстия на передней стене (Y+ стена) - используем грань напрямую для эскиза
+    # ============================================================
+    front_face = None
+    faces = part.part.EntityCollection(6)
+    for i in range(faces.GetCount()):
+        f = faces.GetByIndex(i)
+        fdef = f.GetDefinition()
+        if fdef and fdef.IsPlanar():
+            loops = fdef.LoopCollection()
+            if loops.GetCount() > 0:
+                loop = loops.GetByIndex(0)
+                edges = loop.EdgeCollection()
+                if edges.GetCount() > 0:
+                    edge = edges.GetByIndex(0)
+                    v1 = edge.GetVertex(True)
+                    v2 = edge.GetVertex(False)
+                    if v1 and v2:
+                        res1, x1, y1, z1 = v1.GetPoint(0.0, 0.0, 0.0)
+                        if res1 and abs(y1 - 27.1) < 0.1:
+                            front_face = f
+                            break
+    if front_face is None:
+        raise RuntimeError("Front face not found!")
+
+    def draw_side_holes(b):
+        r = 1.8  # D=3.6 -> R=1.8
+        b.circle(-32.0, 10.0, r)
+        b.dim_diam(-32.0, 10.0, r, angle_deg=45.0, var_name="D_side_hole")
+        b.circle(32.0, 10.0, r)
+        b.dim_diam(32.0, 10.0, r, angle_deg=45.0, var_name="D_side_hole")
+
+    sketch_side = part.create_sketch_on_face(front_face, draw_side_holes)
     part.cut(sketch_side, depth=2.0, direction=DT_REVERSE, expr="t")
 
     # Corner fillets (R=2)

@@ -1862,8 +1862,16 @@ class KompasPart:
         cylindrical_only=True — только цилиндрические ребра (входы в отверстия).
         """
         edges = []
-        part_ents = _wrap(K5.ksEntityCollection, self.part.EntityCollection(6))  # OBJ_FACE=6
-        for i in range(part_ents.GetCount()):
+        raw_collection = self.part.EntityCollection(6)  # OBJ_FACE=6
+        if raw_collection is None:
+            log.warning("  [FIND EDGES] EntityCollection(6) returned None")
+            return edges
+        part_ents = _wrap(K5.ksEntityCollection, raw_collection)
+        if part_ents is None:
+            log.warning("  [FIND EDGES] Failed to wrap EntityCollection")
+            return edges
+        count = part_ents.GetCount()
+        for i in range(count):
             raw_f = part_ents.GetByIndex(i)
             if raw_f is None:
                 continue
