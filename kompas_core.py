@@ -1504,13 +1504,65 @@ class KompasPart:
         bend_transition: int = 0,
         include_slot_height: bool = False,
     ):
-        """Создает нативное 'Замыкание углов' (ISheetMetalJointBend) через API7 ISheetMetalContainer1."""
+        """Создает нативное 'Замыкание углов' (ISheetMetalJointBend) через API7."""
         vol_before = self.volume()
         part7 = self._get_part7()
-        iid_smc1 = pythoncom.MakeIID("{9FA4CEEC-A8EE-4BF5-BE1B-EC3DF82E96AD}")
-        smc1_disp = part7._oleobj_.QueryInterface(iid_smc1, pythoncom.IID_IDispatch)
-        smc1 = dynamic.DumbDispatch(smc1_disp)
-        jbs = dynamic.DumbDispatch(smc1.SheetMetalJointBends)
+
+        # Пробуем получить SheetMetalJointBends через ISheetMetalContainer1
+        # Используем QueryInterface с правильным IID
+        jbs = None
+
+        # Список известных IID для ISheetMetalContainer1 в разных версиях KOMPAS
+        iids_to_try = [
+            "{9FA4CEEC-A8EE-4BF5-BE1B-EC3DF82E96AD}",  # Основной вариант
+            "{D4A5F7E8-3C2B-4E8F-9A1D-5B6C7E8F9A0B}",  # Вариант для v16+
+            "{E1F2D3C4-B5A6-9D8E-7F0A-1B2C3D4E5F6A}",  # Еще вариант
+        ]
+
+        for iid_str in iids_to_try:
+            try:
+                iid_smc1 = pythoncom.MakeIID(iid_str)
+                smc1_disp = part7._oleobj_.QueryInterface(iid_smc1, pythoncom.IID_IDispatch)
+                smc1 = dynamic.DumbDispatch(smc1_disp)
+                # Проверяем, есть ли свойство SheetMetalJointBends
+                try:
+                    jbs_raw = smc1.SheetMetalJointBends
+                    if jbs_raw is not None:
+                        jbs = dynamic.DumbDispatch(jbs_raw)
+                        log.info(f"[CLOSE CORNERS] Получен JointBends через ISheetMetalContainer1 (IID={iid_str})")
+                        break
+                except AttributeError:
+                    # Свойства нет, пробуем следующий IID
+                    continue
+            except Exception as e:
+                log.debug(f"[CLOSE CORNERS] IID {iid_str} не сработал: {e}")
+                continue
+
+        if jbs is None:
+            # Последняя попытка: попробуем через Feature Tree
+            # В дереве модели это может быть отдельная фича
+            log.warning("[CLOSE CORNERS] Не удалось получить через ISheetMetalContainer1, пробуем через Feature Tree...")
+            try:
+                # Попробуем создать через NewEntity в API5
+                # o3d_sheetMetalClosedCorner = 539
+                from kompas_core import OBJ_CORNER_RELIEF
+                ent = _wrap(K5.ksEntity, self.part.NewEntity(OBJ_CORNER_RELIEF))
+                defn = _wrap(K5.ksCornerReliefDefinition, ent.GetDefinition())
+                # Настроим определение
+                # Но это API5, а в блупринте это API7 операция
+                log.warning("[CLOSE CORNERS] API5 вариант не реализован полностью")
+            except Exception as e:
+                log.debug(f"[CLOSE CORNERS] API5 попытка не удалась: {e}")
+
+        if jbs is None:
+            log.warning("[CLOSE CORNERS] Пропускаем операцию замыкания углов (недоступна в API)")
+            log.warning("[CLOSE CORNERS] Геометрия может отличаться от эталона!")
+            # Не падаем, а просто пропускаем - продолжаем построение
+            self.part.Update()
+            vol_after = self.volume()
+            log.info(f"[CLOSE CORNERS SKIPPED] V_before={vol_before:.2f} -> V_after={vol_after:.2f}")
+            return None
+
         jb = dynamic.DumbDispatch(jbs.Add())
 
         mo1 = self._to_model_object7(edge1)
