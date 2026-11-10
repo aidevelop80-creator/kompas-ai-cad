@@ -665,38 +665,53 @@ class KompasPart:
                 return sf
         return None
 
-    def _make_dim_driving(self, dim_obj, expr_str: str):
-        """Пытается сделать 2D-размер API7 управляющим (фиксированным) и назначить ему переменную.
+    def _attach_line_dim_to_segments(self, ld, all_lsegs, x1: float, y1: float, x2: float, y2: float):
+        """Привязывает ножки линейного размера (Index=1 и Index=2) к вершинам отрезков эскиза через ConstraintType=6 (MergePoints)."""
+        dobj_ld = _wrap(K7.IDrawingObject1, ld)
+        for pt_idx, (px, py) in ((1, (x1, y1)), (2, (x2, y2))):
+            attached = False
+            for ls in all_lsegs:
+                for v_idx, (vx, vy) in ((1, (ls.X1, ls.Y1)), (2, (ls.X2, ls.Y2))):
+                    if math.hypot(vx - px, vy - py) < 1e-2:
+                        try:
+                            con = _wrap(K7.IParametriticConstraint, dobj_ld.NewConstraint())
+                            con.ConstraintType = 6  # ksCMergePoints — совпадение точек
+                            con.Index = pt_idx
+                            con.Partner = _ole(ls)
+                            con.PartnerIndex = v_idx
+                            if con.Create():
+                                attached = True
+                                break
+                        except Exception:
+                            pass
+                if attached:
+                    break
+        ld.Update()
 
-        ВАЖНО: Размер в эскизе должен быть УПРАВЛЯЮЩИМ, а не информационным.
-        Информационный размер не управляет геометрией и вызывает ошибку КОМПАСА
-        при попытке привязать к нему формулу. Всегда задавай выражение через
-        parametritic constraint, чтобы размер стал driving.
-        """
+    def _make_dim_driving(self, dim_obj, expr_str: str):
+        """Делает 2D-размер API7 управляющим (ConstraintType=15 — FixedDim) и задает формулу Expression."""
         dobj = _wrap(K7.IDrawingObject1, dim_obj)
-        # Пробуем все возможные коды параметрического ограничения для размера (0..100).
-        # КРИТИЧНО: не прерываемся на первом Create() — ищем тип, где И Create(),
-        # И Expression устанавливается. Только такой комбинацией размер становится
-        # управляющим (driving), а не информационным.
-        # Диаметральные размеры обычно принимают тип 1 (Horizontal),
-        # линейные размеры могут требовать иные типы (0..100).
         best_ctype = None
         best_con = None
-        for ctype in range(101):
+        # Сначала пробуем штатный код 15 (FixedDim в КОМПАС API7), затем 1 и остальные
+        try_order = [15, 1] + [c for c in range(101) if c not in (15, 1)]
+        for ctype in try_order:
             try:
                 con = _wrap(K7.IParametriticConstraint, dobj.NewConstraint())
                 con.ConstraintType = ctype
+                con.Index = 0
                 if con.Create():
-                    # Выражение задаём ПОСЛЕ Create(), т.к. для некоторых типов размеров
-                    # (особенно линейных) свойство Expression доступно только после создания ограничения
                     if expr_str:
                         try:
                             con.Expression = str(expr_str)
                             best_ctype = ctype
                             best_con = con
-                            break  # Нашли тип, где и Create, и Expression работают → размер управляющий
+                            break
                         except Exception:
-                            # Expression не применился для этого типа — пробуем следующий
+                            try:
+                                con.Delete()
+                            except Exception:
+                                pass
                             continue
                     else:
                         best_ctype = ctype
@@ -706,12 +721,12 @@ class KompasPart:
                 continue
         if best_con is not None:
             dim_obj.Update()
-            log.debug(
+            log.info(
                 f"  [API7 DIM CONSTRAINT] Размер сделан управляющим ConstraintType={best_ctype} (expr='{expr_str}')"
             )
         else:
-            log.debug(
-                f"  [API7 DIM CONSTRAINT] Не найден тип ограничения с поддержкой Expression для размера"
+            log.warning(
+                f"  [API7 DIM CONSTRAINT] Не удалось сделать размер управляющим (expr='{expr_str}')"
             )
 
     def _apply_api7_sketch_dims_and_constraints(self, sk_ent, builder: SketchBuilder):
@@ -771,6 +786,11 @@ class KompasPart:
 
                 # 2. Создаем линейные размеры (ILineDimensions), если есть
                 if builder.pending_lin_dims:
+                    lsegs = _wrap(K7.ILineSegments, dc.LineSegments)
+                    all_lsegs = [
+                        _wrap(K7.ILineSegment, lsegs.LineSegment(i))
+                        for i in range(lsegs.Count)
+                    ]
                     ldims = _wrap(K7.ILineDimensions, sym_c.LineDimensions)
                     for x1, y1, x2, y2, px, py, expr in builder.pending_lin_dims:
                         ld = _wrap(K7.ILineDimension, ldims.Add())
@@ -784,6 +804,7 @@ class KompasPart:
                         else:
                             ld.Orientation = 0
                         ok_ld = ld.Update()
+                        self._attach_line_dim_to_segments(ld, all_lsegs, x1, y1, x2, y2)
                         log.debug(
                             f"  [API7 DIM] Создан ILineDimension expr='{expr}' -> update={ok_ld}"
                         )
@@ -1318,256 +1339,252 @@ class KompasPart:
         )
         return ent
 
-    # ===================== SHEET METAL (ЛИСТОВЫЙ МЕТАЛЛ) =====================
+    # ===================== SHEET METAL (ЛИСТОВЫЙ МЕТАЛЛ — API7 ISheetMetalContainer) =====================
+
+    def _to_model_object7(self, ent_or_def):
+        """Конвертирует объект API5 (ksEntity, ksEdgeDefinition, ksFaceDefinition) в API7 IModelObject."""
+        if isinstance(ent_or_def, K7.IModelObject):
+            return ent_or_def
+        raw = _ole(ent_or_def)
+        # Если передан ksEdgeDefinition или ksFaceDefinition, извлекаем родительский ksEntity через GetEntity()
+        try:
+            ent5 = ent_or_def.GetEntity()
+            if ent5 is not None:
+                raw = _ole(ent5)
+        except Exception:
+            pass
+        mo_disp = self.api5.TransferInterface(raw, 2, 0)
+        if mo_disp is None:
+            raise RuntimeError("[FAIL TRANSFER] Не удалось перевести объект API5 в API7 IModelObject!")
+        return _wrap(K7.IModelObject, mo_disp)
 
     def create_sheet_metal_body(
         self,
         sketch_ent,
-        thickness_var: str = "t",
-        bend_radius_var: str = "R_bend",
-        k_factor_var: str = "K_factor",
-        thickness_direction: bool = True,
+        thickness: float = 2.0,
+        bend_radius: float = 5.0,
+        k_factor: float = 0.4,
+        thickness_direction: int = 1,
+        direction: int = 0,
+        unfold_type: int = 0,
         thickness_expr: str = None,
         bend_radius_expr: str = None,
         k_factor_expr: str = None,
     ):
-        """Создает тело листового металла (o3d_sheetMetalBody = 74) из эскиза."""
+        """Создает нативное листовое тело (Листовое тело:1) через API7 ISheetMetalBodies."""
         vol_before = self.volume()
         vars_before = set(self._get_all_feature_var_names())
 
-        raw_ent = self.part.NewEntity(OBJ_SHEET_METAL_BODY)
-        ole_ent = _ole(raw_ent)
+        part7 = self._get_part7()
+        smc = _wrap(K7.ISheetMetalContainer, part7)
+        bodies = _wrap(K7.ISheetMetalBodies, smc.SheetMetalBodies)
+        sm_body = _wrap(K7.ISheetMetalBody, bodies.Add())
 
-        # Получаем определение через InvokeTypes (DISPID 6 — Definition)
-        defn_raw = None
-        for dispid in (6, 11):
-            try:
-                result = ole_ent.InvokeTypes(dispid, 0, 2, (9, 0), ())  # PROPGET
-                if result is not None and hasattr(result, '_oleobj_'):
-                    defn_raw = result
-                    log.info(f"  [SHEET METAL] Получено определение через DISPID {dispid}: {type(defn_raw)}")
-                    break
-            except Exception as e:
-                log.debug(f"  [SHEET METAL] DISPID {dispid} error: {e}")
-                pass
+        sk_feat7 = self._find_sketch_feature7(sketch_ent)
+        if sk_feat7 is None:
+            sk_feat7 = self._to_model_object7(sketch_ent)
+        sk7 = _wrap(K7.ISketch, sk_feat7)
 
-        if defn_raw is None:
-            log.error("  [SHEET METAL] Не удалось получить определение через InvokeTypes!")
-            raise RuntimeError("[FAIL SHEET METAL] Не удалось получить определение тела листового металла!")
+        sm_body.Sketch = _ole(sk7)
+        sm_body.Thickness = float(thickness)
+        sm_body.Radius = float(bend_radius)
+        sm_body.BendCoefficient = float(k_factor)
+        sm_body.ThicknessDirection = int(thickness_direction)
+        sm_body.Direction = int(direction)
+        sm_body.UnfoldType = int(unfold_type)
+        sm_body.Straighten = False
 
-        dyn_defn = dynamic.DumbDispatch(defn_raw)
-        ole_ent = _ole(raw_ent)
-        ent = _wrap(K5.ksEntity, raw_ent)
-
-        # Настраиваем базовые параметры через сырой COM
-        dyn_defn.SetSketch(_ole(sketch_ent))
-        dyn_defn.ThicknessDirection = thickness_direction
-        dyn_defn.Straighten = False
-
-        if not ent.Create():
-            log.error(f"[FAIL SHEET METAL] Тело листового металла '{ent.name}' не построилось!")
+        if not sm_body.Update():
+            log.error("[FAIL SHEET METAL] Листовое тело API7 не построилось!")
             self.close()
-            raise RuntimeError("[FAIL SHEET METAL] Тело листового металла не построилось!")
+            raise RuntimeError("[FAIL SHEET METAL] Листовое тело API7 не построилось!")
+
         self.part.Update()
 
-        # Привязываем формулы к переменным толщины, радиуса, K-factor
+        pending = []
         if thickness_expr:
-            thickness_val = float(dyn_defn.Thickness)
-            self._bind_new_vars_to_expressions(
-                vars_before, [(thickness_val, thickness_expr)], context=f"{ent.name}.Thickness"
-            )
+            pending.append((float(thickness), thickness_expr))
         if bend_radius_expr:
-            radius_val = float(dyn_defn.BendRadius)
-            self._bind_new_vars_to_expressions(
-                vars_before, [(radius_val, bend_radius_expr)], context=f"{ent.name}.Radius"
-            )
+            pending.append((float(bend_radius), bend_radius_expr))
         if k_factor_expr:
-            k_val = float(dyn_defn.KFactor)
-            self._bind_new_vars_to_expressions(
-                vars_before, [(k_val, k_factor_expr)], context=f"{ent.name}.KFactor"
-            )
-
-        self.part.RebuildModel()
-        self.part.Update()
+            pending.append((float(k_factor), k_factor_expr))
+        if pending:
+            self._bind_new_vars_to_expressions(vars_before, pending, context=sm_body.Name)
+            self.part.RebuildModel()
+            self.part.Update()
 
         vol_after = self.volume()
         log.info(
-            f"[SHEET METAL BODY OK] '{ent.name}': thickness={thickness_expr}, "
-            f"radius={bend_radius_expr}, k_factor={k_factor_expr}, "
-            f"V_before={vol_before:.2f} -> V_after={vol_after:.2f} (ΔV={vol_after - vol_before:.2f} мм³)"
+            f"[SHEET METAL BODY OK] '{sm_body.Name}': T={thickness}, R={bend_radius}, K={k_factor}, "
+            f"V_before={vol_before:.2f} -> V_after={vol_after:.2f} (ΔV=+{vol_after - vol_before:.2f} мм³)"
         )
-        return ent
+        return sm_body
 
     def add_bend(
         self,
-        face_entity,
-        length_var: str = "H_flange",
-        bend_radius_var: str = "R_bend",
-        angle_var: str = "Bend_Angle",
-        k_factor_var: str = "K_factor",
-        bend_allowance_var: str = "BA",
-        bend_deduction_var: str = "BD",
-        relief_h_var: str = "Relief_H",
-        relief_w_var: str = "Relief_W",
+        edge_or_face,
+        length: float = 16.0,
+        bend_radius: float = 2.0,
+        angle: float = 90.0,
+        k_factor: float = 0.4,
         direction: bool = True,
         disposal: int = 0,
-        length_type: int = 0,
-        offset_type: int = 0,
+        length_type: int = 1,
+        offset_type: int = 3,
         side_type: int = 0,
         bend_release: int = 0,
-        dismissal_width: float = None,
-        dismissal_depth: float = None,
-        dismissal_angle_type: int = 0,
         length_expr: str = None,
         radius_expr: str = None,
         angle_expr: str = None,
         k_factor_expr: str = None,
-        ba_expr: str = None,
-        bd_expr: str = None,
-        relief_h_expr: str = None,
-        relief_w_expr: str = None,
     ):
-        """Добавляет сгиб (o3d_sheetMetalBend = 75) к грани листового тела."""
+        """Добавляет нативный сгиб (Сгиб:N) к ребру листового тела через API7 ISheetMetalBends."""
         vol_before = self.volume()
         vars_before = set(self._get_all_feature_var_names())
 
-        raw_ent = self.part.NewEntity(OBJ_SHEET_METAL_BEND)
-        defn_raw = raw_ent.GetDefinition()
-        dyn_defn = dynamic.DumbDispatch(defn_raw)
-        ent = _wrap(K5.ksEntity, raw_ent)
+        part7 = self._get_part7()
+        smc = _wrap(K7.ISheetMetalContainer, part7)
+        bends = _wrap(K7.ISheetMetalBends, smc.SheetMetalBends)
+        bend = _wrap(K7.ISheetMetalBend, bends.Add())
 
-        defn_raw.SetBendObject(_ole(face_entity))
-        dyn_defn.Direction = direction
-        dyn_defn.Disposal = disposal
-        dyn_defn.LengthType = length_type
-        dyn_defn.OffsetType = offset_type
-        dyn_defn.LeftSideType = side_type
-        dyn_defn.RightSideType = side_type
-        dyn_defn.BendRelease = bend_release
-        dyn_defn.Straighten = False
+        mo_edge = self._to_model_object7(edge_or_face)
+        bend.BendObject = _ole(mo_edge)
+        bend.Direction = bool(direction)
+        bend.Disposal = int(disposal)
+        bend.Angle = float(angle)
+        bend.Radius = float(bend_radius)
+        bend.BendCoefficient = float(k_factor)
+        bend.LengthType = int(length_type)
+        bend.LengthType1 = int(length_type)
+        bend.Length = float(length)
+        bend.Length1 = float(length)
+        bend.OffsetType = int(offset_type)
+        bend.LeftSideType = int(side_type)
+        bend.RightSideType = int(side_type)
+        bend.BendRelease = int(bend_release)
+        bend.Straighten = False
 
-        if dismissal_width is not None:
-            dyn_defn.DismissalWidth = dismissal_width
-            dyn_defn.DismissalWithWidth = True
-        if dismissal_depth is not None:
-            dyn_defn.DismissalDepth = dismissal_depth
-        dyn_defn.DismissalAngleType = dismissal_angle_type
-
-        if not ent.Create():
-            log.error(f"[FAIL BEND] Сгиб '{ent.name}' не построился!")
+        if not bend.Update():
+            log.error(f"[FAIL BEND] Сгиб '{bend.Name}' не построился!")
             self.close()
-            raise RuntimeError("[FAIL BEND] Сгиб не построился!")
+            raise RuntimeError("[FAIL BEND] Сгиб листового тела не построился!")
+
         self.part.Update()
 
-        # Привязываем формулы
         pending = []
         if length_expr:
-            pending.append((float(dyn_defn.Length), length_expr))
+            pending.append((float(length), length_expr))
         if radius_expr:
-            pending.append((float(dyn_defn.BendRadius), radius_expr))
+            pending.append((float(bend_radius), radius_expr))
         if angle_expr:
-            pending.append((float(dyn_defn.BendAngle), angle_expr))
+            pending.append((float(angle), angle_expr))
         if k_factor_expr:
-            pending.append((float(dyn_defn.KFactor), k_factor_expr))
-        if ba_expr:
-            pending.append((float(dyn_defn.BendAllowance), ba_expr))
-        if bd_expr:
-            pending.append((float(dyn_defn.BendDeduction), bd_expr))
-        if relief_h_expr:
-            pending.append((float(dyn_defn.DismissalDepth), relief_h_expr))
-        if relief_w_expr:
-            pending.append((float(dyn_defn.DismissalWidth), relief_w_expr))
-
+            pending.append((float(k_factor), k_factor_expr))
         if pending:
-            self._bind_new_vars_to_expressions(vars_before, pending, context=ent.name)
+            self._bind_new_vars_to_expressions(vars_before, pending, context=bend.Name)
             self.part.RebuildModel()
             self.part.Update()
 
         vol_after = self.volume()
         log.info(
-            f"[BEND OK] '{ent.name}': length={length_expr}, radius={radius_expr}, angle={angle_expr}, "
+            f"[BEND OK] '{bend.Name}': L={length}, R={bend_radius}, Angle={angle}°, "
             f"V_before={vol_before:.2f} -> V_after={vol_after:.2f} (ΔV={vol_after - vol_before:.2f} мм³)"
         )
-        return ent
+        return bend
 
-    def close_corners(self, corner_type: int = 0, gap: float = 0.1):
-        """Замыкает углы листового тела (o3d_sheetMetalClosedCorner = 539)."""
+    def close_corners(
+        self,
+        edge1,
+        edge2,
+        definition_type: bool = False,
+        closure: int = 0,
+        edge_closure: int = 0,
+        slot_value: float = 0.0,
+        overlap_factor: float = 0.0,
+        bend_transition: int = 0,
+        include_slot_height: bool = False,
+    ):
+        """Создает нативное 'Замыкание углов' (ISheetMetalJointBend) через API7 ISheetMetalContainer1."""
         vol_before = self.volume()
+        part7 = self._get_part7()
+        iid_smc1 = pythoncom.MakeIID("{9FA4CEEC-A8EE-4BF5-BE1B-EC3DF82E96AD}")
+        smc1_disp = part7._oleobj_.QueryInterface(iid_smc1, pythoncom.IID_IDispatch)
+        smc1 = dynamic.DumbDispatch(smc1_disp)
+        jbs = dynamic.DumbDispatch(smc1.SheetMetalJointBends)
+        jb = dynamic.DumbDispatch(jbs.Add())
 
-        raw_ent = self.part.NewEntity(OBJ_SHEET_METAL_CLOSED_CORNER)
-        defn_raw = raw_ent.GetDefinition()
-        dyn_defn = dynamic.DumbDispatch(defn_raw)
-        ent = _wrap(K5.ksEntity, raw_ent)
+        mo1 = self._to_model_object7(edge1)
+        mo2 = self._to_model_object7(edge2)
+        jb.DefinitionType = bool(definition_type)
+        jb.Bend1 = _ole(mo1)
+        jb.Bend2 = _ole(mo2)
+        jb.Closure = int(closure)
+        jb.EdgeClosure = int(edge_closure)
+        jb.SlotValue = float(slot_value)
+        jb.OverlapFactor = float(overlap_factor)
+        jb.BendTransition = int(bend_transition)
+        jb.IncludeSlotHeight = bool(include_slot_height)
 
-        # Получаем все сгибы для замыкания
-        container = _wrap(K5.ksEntity, self.part.GetSheetMetalContainer())
-        dyn_container = dynamic.DumbDispatch(container._oleobj_)
-        bends = dyn_container.SheetMetalBends
-
-        bend_collection = dyn_defn.Bends
-        for i in range(bends.Count):
-            bend = bends.Item(i)
-            bend_collection.Add(_ole(bend))
-
-        dyn_defn.Gap = gap
-
-        if not ent.Create():
-            log.error(f"[FAIL CLOSE CORNERS] Замыкание углов '{ent.name}' не построилось!")
+        if not jb.Update():
+            log.error("[FAIL CLOSE CORNERS] Замыкание углов не построилось!")
             self.close()
             raise RuntimeError("[FAIL CLOSE CORNERS] Замыкание углов не построилось!")
-        self.part.Update()
 
+        self.part.Update()
         vol_after = self.volume()
         log.info(
-            f"[CLOSE CORNERS OK] '{ent.name}': gap={gap}, "
-            f"V_before={vol_before:.2f} -> V_after={vol_after:.2f} (ΔV={vol_after - vol_before:.2f} мм³)"
+            f"[CLOSE CORNERS OK] '{jb.Name}': V_before={vol_before:.2f} -> V_after={vol_after:.2f} (ΔV={vol_after - vol_before:.2f} мм³)"
         )
-        return ent
+        return jb
 
     def sheet_metal_cut(
         self,
         sketch_ent,
-        cut_type: int = 0,
-        depth: float = 10.0,
+        cut_type: int = 2,
+        depth: float = 54.2,
+        cut: bool = True,
         depth_expr: str = None,
-        body_entity: any = None,
     ):
-        """Вырезает в листовом теле по эскизу (o3d_sheetMetalCut = 78)."""
+        """Создает нативный 'Вырез в листовом теле' через API7 ISheetMetalCuts."""
         vol_before = self.volume()
         vars_before = set(self._get_all_feature_var_names())
 
-        raw_ent = self.part.NewEntity(OBJ_SHEET_METAL_CUT)
-        defn_raw = raw_ent.GetDefinition()
-        dyn_defn = dynamic.DumbDispatch(defn_raw)
-        ent = _wrap(K5.ksEntity, raw_ent)
+        part7 = self._get_part7()
+        smc = _wrap(K7.ISheetMetalContainer, part7)
+        cuts = _wrap(K7.ISheetMetalCuts, smc.SheetMetalCuts)
+        sm_cut = _wrap(K7.ISheetMetalCut, cuts.Add())
 
-        defn_raw.SetSketch(_ole(sketch_ent))
-        dyn_defn.CutType = cut_type
-        dyn_defn.Depth = float(depth)
-        dyn_defn.Cut = True
+        sk_feat7 = self._find_sketch_feature7(sketch_ent)
+        if sk_feat7 is None:
+            sk_feat7 = self._to_model_object7(sketch_ent)
+        sk7 = _wrap(K7.ISketch, sk_feat7)
 
-        if body_entity:
-            defn_raw.SetBody(_ole(body_entity))
+        sm_cut.Sketch = _ole(sk7)
+        sm_cut.CutType = int(cut_type)
+        if cut_type == 0:
+            sm_cut.Depth = float(depth)
+        sm_cut.Cut = bool(cut)
 
-        if not ent.Create():
-            log.error(f"[FAIL SHEET METAL CUT] Вырез в листовом теле '{ent.name}' не построился!")
+        if not sm_cut.Update():
+            log.error(f"[FAIL SHEET METAL CUT] Вырез в листовом теле '{sm_cut.Name}' не построился!")
             self.close()
             raise RuntimeError("[FAIL SHEET METAL CUT] Вырез в листовом теле не построился!")
+
         self.part.Update()
 
-        if depth_expr:
+        if depth_expr and cut_type == 0:
             self._bind_new_vars_to_expressions(
-                vars_before, [(float(depth), depth_expr)], context=ent.name
+                vars_before, [(float(depth), depth_expr)], context=sm_cut.Name
             )
             self.part.RebuildModel()
             self.part.Update()
 
         vol_after = self.volume()
         log.info(
-            f"[SHEET METAL CUT OK] '{ent.name}': depth={depth_expr or depth}, "
+            f"[SHEET METAL CUT OK] '{sm_cut.Name}': CutType={cut_type}, "
             f"V_before={vol_before:.2f} -> V_after={vol_after:.2f} (ΔV={vol_after - vol_before:.2f} мм³)"
         )
-        return ent
+        return sm_cut
 
     def fillet(self, edges: list, radius: float, expr: str = None):
         """Скругление ребер (o3d_fillet = 34)."""
