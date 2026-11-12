@@ -119,6 +119,15 @@ def inspect_m3d(filepath: str) -> str:
 
     docs = _wrap(K7.IDocuments, api7.Documents)
     doc7 = _wrap(K7.IKompasDocument, docs.Open(abs_path, True, False))
+    # ВАЖНО: активировать открытый документ, иначе ActiveDocument3D() ниже
+    # вернёт другую (последнюю активную) вкладку и инспектор прочитает не тот файл.
+    try:
+        _wrap(K7.IKompasDocument3D, doc7).Active = True
+    except Exception:
+        try:
+            doc7.Active = True
+        except Exception:
+            pass
     doc7_3d = _wrap(K7.IKompasDocument3D, doc7)
     part7 = _wrap(K7.IPart7, doc7_3d.TopPart)
     feat7_root = _wrap(K7.IFeature7, part7)

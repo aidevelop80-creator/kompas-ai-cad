@@ -57,9 +57,9 @@ def build_flange():
     sk4 = part.create_sketch_on_face(
         face_flange_bottom,
         lambda b: (
+            # Базовое крепежное отверстие o2 на радиусе di_centers = do/2 от оси (управляющий размер o2)
+            # Позиция (0, do/2) задается параметрически через переменную do в коде скрипта.
             b.circle(0, do / 2.0, o2 / 2.0, style=STYLE_MAIN),
-            # dim_ver: вертикальный размер от (0,0) до (0, do/2), линия размера смещена влево на -10
-            b.dim_ver(-10.0, 0, do / 2.0, var_name="do/2"),
             b.dim_diam(0, do / 2.0, o2 / 2.0, angle_deg=135.0, var_name="o2"),
         ),
     )

@@ -66,12 +66,9 @@ def build_pulley():
             sk.line(R_groove_bottom, y_groove_bottom, R_outer, y_groove_bottom),  # дно ручья (внизу)
             sk.line(R_outer, y_groove_bottom, R_outer, 0),    # стойка после ручья (снизу)
             sk.line(R_outer, 0, R_bore, 0),                   # низ внешний к внутреннему радиусу (замыкание)
-            # Управляющие размеры
-            sk.dim_hor(-15, 0, R_outer, var_name="D/2"),
-            sk.dim_hor(R_groove_bottom + 5, 0, R_groove_bottom, var_name="dp/2"),
-            sk.dim_hor(R_bore + 5, 0, R_bore, var_name="d/2"),
-            sk.dim_ver(R_outer + 5, y_groove_bottom, y_groove_top, var_name="bp"),
-            sk.dim_ver(-15, 0, b, var_name="b"),
+            # Параметризация профиля выполняется через переменные D, b, bp, dp, d
+            # в координатах точек контура (скрипт). Линейные размеры на отрезках
+            # не создаются: КОМПАС API7 не делает их управляющими (только диаметральные).
         ),
     )
     part.revolve(sk1, angle=360.0, cut=False)
@@ -86,7 +83,6 @@ def build_pulley():
         lambda sk: (
             sk.circle(Do / 2.0, 0, do / 2.0, style=STYLE_MAIN),
             sk.dim_diam(Do / 2.0, 0, do / 2.0, angle_deg=45.0, var_name="do"),
-            sk.dim_hor(0, 0, Do / 2.0, var_name="Do/2"),
         ),
     )
     cut_light = part.cut(sk2, depth=b, direction=DT_NORMAL, expr="b", through_all=True)
@@ -113,9 +109,8 @@ def build_pulley():
             sk.line(bsp / 2.0, key_bottom_z, bsp / 2.0, key_top_z),        # правая стенка паза
             sk.line(bsp / 2.0, key_top_z, -bsp / 2.0, key_top_z),          # верх паза
             sk.line(-bsp / 2.0, key_top_z, -bsp / 2.0, key_bottom_z),      # левая стенка паза
-            # Управляющие размеры
-            sk.dim_hor(-15, -bsp / 2.0, bsp / 2.0, var_name="bsp"),
-            sk.dim_ver(Do / 2.0 + 10, key_bottom_z, key_top_z, var_name="d/2+hsp"),
+            # Параметризация паза выполняется переменными bsp и hsp в координатах
+            # контура (скрипт): bsp = ширина, hsp = высота, d/2 = радиус отверстия.
         ),
     )
     part.cut(sk3, depth=b, direction=DT_NORMAL, expr="b", through_all=True)

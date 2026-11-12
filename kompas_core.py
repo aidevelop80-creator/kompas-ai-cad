@@ -107,6 +107,7 @@ OBJ_CIRCULAR_COPY = 36  # o3d_circularCopy (Массив по концентри
 
 # Additional objects
 OBJ_LOFT = 30  # o3d_baseLoft
+OBJ_LOFT_SURFACE = 514  # o3d_LoftSurface (поверхность по сечениям / соединения)
 OBJ_RULED_SURFACE = 515  # o3d_RuledSurface
 OBJ_SURFACE_SEW = 96  # o3d_SurfaceSewer
 
@@ -793,7 +794,14 @@ class KompasPart:
                     ]
                     ldims = _wrap(K7.ILineDimensions, sym_c.LineDimensions)
                     for x1, y1, x2, y2, px, py, expr in builder.pending_lin_dims:
-                        ld = _wrap(K7.ILineDimension, ldims.Add())
+                        raw_dim = ldims.Add()
+                        log.info(
+                            f"[API7 DIM LIN] Создаю линейный размер expr='{expr}': ({x1:.2f},{y1:.2f})->({x2:.2f},{y2:.2f}) pts=({px:.2f},{py:.2f})"
+                        )
+                        ld = _wrap(K7.ILineDimension, raw_dim)
+                        if ld is None:
+                            log.error(f"  [API7 DIM LIN] ldims.Add() вернул None для expr='{expr}'")
+                            continue
                         ld.X1, ld.Y1 = x1, y1
                         ld.X2, ld.Y2 = x2, y2
                         ld.X3, ld.Y3 = px, py
@@ -804,11 +812,18 @@ class KompasPart:
                         else:
                             ld.Orientation = 0
                         ok_ld = ld.Update()
-                        self._attach_line_dim_to_segments(ld, all_lsegs, x1, y1, x2, y2)
-                        log.debug(
-                            f"  [API7 DIM] Создан ILineDimension expr='{expr}' -> update={ok_ld}"
-                        )
-                        self._make_dim_driving(ld, expr)
+                        if not ok_ld:
+                            log.error(f"  [API7 DIM LIN] ld.Update() вернул False для expr='{expr}'")
+                            continue
+                        # Попробуем привязать выражение напрямую к объекту размера
+                        dobj = _wrap(K7.IDrawingObject1, ld)
+                        try:
+                            dobj.Expression = str(expr)
+                            log.info(f"  [API7 DIM LIN] выражение '{expr}' привязано напрямую")
+                        except Exception as e:
+                            log.warning(f"  [API7 DIM LIN] прямая привязка не удалась: {e}")
+                            self._attach_line_dim_to_segments(ld, all_lsegs, x1, y1, x2, y2)
+                            self._make_dim_driving(ld, expr)
 
                 # 3. Накладываем параметрические ограничения на окружности
                 # Порог для определения окружностей в начале координат (увеличен для устойчивости к погрешностям)
@@ -1281,25 +1296,19 @@ class KompasPart:
 
             log.info(f"  [PATTERN] Получен OperationArray: {type(op_array)}")
 
-            # Устанавливаем параметры массива через InvokeTypes на raw COM object
-            # DISPID из SDK: count1=1, step1=2, count2=4, step2=5, factor1=3, factor2=6, geomArray=14, inverce=7
-            # Для PROPPUT (4): resultType=0 (VT_EMPTY), argTypes=(VARTYPE,) для аргумента
+            # Устанавливаем параметры массива через типизированную обёртку ksCircularCopyDefinition
+            # (надёжнее, чем ручной перебор DISPID): count2 = число копий по окружности, step2 = полный угол.
             try:
-                # count1 = 1 (int, VT_I4=3)
-                ole_defn.InvokeTypes(1, 0, 4, 0, (3,), 1)
-                # step1 = 10.0 (double, VT_R8=5)
-                ole_defn.InvokeTypes(2, 0, 4, 0, (5,), 10.0)
-                # count2 = count (int, VT_I4=3)
-                ole_defn.InvokeTypes(4, 0, 4, 0, (3,), int(count))
-                # step2 = angle (double, VT_R8=5)
-                ole_defn.InvokeTypes(5, 0, 4, 0, (5,), float(angle))
-                # factor2 = True (bool, VT_BOOL=11)
-                ole_defn.InvokeTypes(6, 0, 4, 0, (11,), True)
-                # geomArray = False (bool, VT_BOOL=11)
-                ole_defn.InvokeTypes(14, 0, 4, 0, (11,), False)
-                log.info("  [PATTERN] Параметры установлены через InvokeTypes")
+                cc_def = _wrap(K5.ksCircularCopyDefinition, defn_raw)
+                cc_def.count1 = 1
+                cc_def.step1 = 10.0
+                cc_def.count2 = int(count)
+                cc_def.step2 = float(angle)
+                cc_def.factor2 = True
+                cc_def.geomArray = False
+                log.info(f"  [PATTERN] Параметры массива установлены через ksCircularCopyDefinition: count2={int(count)}, step2={angle}°")
             except Exception as e:
-                log.warning(f"  [PATTERN] Установка параметров через InvokeTypes не удалась: {e}")
+                log.warning(f"  [PATTERN] Установка параметров через ksCircularCopyDefinition не удалась: {e}")
 
             flist = _wrap(K5.ksEntityCollection, op_array)
             flist.Clear()
@@ -1711,13 +1720,12 @@ class KompasPart:
         return ent
 
     def create_connection_surface(self, edges, tension1: float = 50.0, tension2: float = 50.0):
-        """Поверхность соединения (Connection Surface / Lofted Surface) по ребрам.
-        edges — список ребер, по которым строится поверхность.
-        tension1, tension2 — натяжение (0-100)."""
+        """Поверхность соединения (Lofted Surface, o3d_LoftSurface) по ребрам.
+        edges — список ребер (сечений), по которым строится поверхность соединения зазора."""
         vol_before = self.volume()
 
-        ent = _wrap(K5.ksEntity, self.part.NewEntity(OBJ_LOFT))
-        defn = _wrap(K5.ksLoftDefinition, ent.GetDefinition())
+        ent = _wrap(K5.ksEntity, self.part.NewEntity(OBJ_LOFT_SURFACE))
+        defn = _wrap(K5.ksLoftSurfaceDefinition, ent.GetDefinition())
         # Добавление сечений (ребер) через array()
         dyn_defn = dynamic.DumbDispatch(defn._oleobj_)
         arr = dyn_defn.array()
@@ -2140,7 +2148,7 @@ class KompasPart:
             result[name] = self.add_variable(name, value, note)
         return result
 
-    def _collect_vars_from_feat7(self, feat7, seen: set, out_list: list):
+    def _collect_vars_from_feat7(self, feat7, seen: set, out_list: list, collect_all: bool = False):
         """Извлекает все IVariable7 из заданного IFeature7."""
         for ext_flag in (True, False):
             for sketch_flag in (False, True):
@@ -2155,6 +2163,9 @@ class KompasPart:
                     try:
                         v = _wrap(K7.IVariable7, item)
                         name = str(v.Name or "")
+                        note = str(getattr(v, "ParameterNote", "") or "")
+                        if collect_all:
+                            log.info(f"[VAR DBG] name='{name}' note='{note}' val={v.Value}")
                         if not name or name in seen:
                             continue
                         seen.add(name)
@@ -2162,7 +2173,7 @@ class KompasPart:
                     except Exception:
                         pass
 
-    def _get_all_feature_vars(self) -> list:
+    def _get_all_feature_vars(self, collect_all: bool = False) -> list:
         """
         Возвращает список всех внутренних переменных модели (v382, v386...) через API7 IFeature7,
         включая переменные всех эскизов и 3D-операций!
@@ -2174,7 +2185,7 @@ class KompasPart:
             return out_list
         try:
             feat7_root = _wrap(K7.IFeature7, part7)
-            self._collect_vars_from_feat7(feat7_root, seen, out_list)
+            self._collect_vars_from_feat7(feat7_root, seen, out_list, collect_all)
             raw_sub = feat7_root.SubFeatures(0, True, False)
             sub_list = (
                 raw_sub
@@ -2183,7 +2194,7 @@ class KompasPart:
             )
             for item in sub_list:
                 sf = _wrap(K7.IFeature7, item)
-                self._collect_vars_from_feat7(sf, seen, out_list)
+                self._collect_vars_from_feat7(sf, seen, out_list, collect_all)
         except Exception as e:
             log.debug(f"Ошибка при чтении переменных API7: {e}")
         return out_list
@@ -2201,6 +2212,7 @@ class KompasPart:
             f"{v.Name}={float(v.Value):.2f}({getattr(v, 'ParameterNote', '')})"
             for v in new_vars
         ]
+        log.debug(f"  [VARS in {context}] Всего переменных: {len(all_vars)}")
         log.debug(f"  [VARS NEW in {context}] Появились переменные: {new_summary}")
 
         used = set()

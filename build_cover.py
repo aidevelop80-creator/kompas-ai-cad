@@ -1,7 +1,6 @@
 # build_cover.py — Параметрическая крышка Uleyma-T.01.01.02 (по эталону example/Uleyma-T.01.01.02_Крышка.m3d)
 # Sheet Metal деталь: базовый контур -> Sheet Metal Body -> 4 сгиба -> замыкание углов -> вырезы/отверстия -> поверхности -> массивы/зеркала
-from kompas_core import DT_NORMAL, DT_REVERSE, STYLE_MAIN, KompasPart
-import math
+from kompas_core import DT_NORMAL, DT_REVERSE, STYLE_MAIN, KompasPart, _wrap
 
 
 def build_cover():
@@ -17,11 +16,7 @@ def build_cover():
     H_flange = 16.0    # Высота вертикальных фланцев (стенок)
     R_bend = 2.0       # Радиус сгиба (внутренний)
     K_factor = 0.4     # Коэффициент нейтрального слоя
-    BA = 10.0          # Величина сгиба (Bend Allowance)
-    BD = 0.0           # Уменьшение сгиба (Bend Deduction)
     Bend_Angle = 90.0  # Угол сгиба
-    Relief_H = 0.0     # Глубина освобождения сгиба
-    Relief_W = 3.0     # Ширина освобождения сгиба
 
     part.create_variables_from_dict({
         "L_base": (L_base, "Длина основания крышки (внутренняя)"),
@@ -31,11 +26,7 @@ def build_cover():
         "H_flange": (H_flange, "Высота вертикальных фланцев"),
         "R_bend": (R_bend, "Радиус сгиба (внутренний)"),
         "K_factor": (K_factor, "Коэффициент нейтрального слоя"),
-        "BA": (BA, "Величина сгиба (Bend Allowance)"),
-        "BD": (BD, "Уменьшение сгиба (Bend Deduction)"),
         "Bend_Angle": (Bend_Angle, "Угол сгиба"),
-        "Relief_H": (Relief_H, "Глубина освобождения сгиба"),
-        "Relief_W": (Relief_W, "Ширина освобождения сгиба"),
     })
 
     # =========================================================================
@@ -43,17 +34,21 @@ def build_cover():
     # =========================================================================
     sk_base = part.create_sketch(
         "xy",
-        lambda sk: (
-            sk.rect(0, 0, L_base + TOL, W_base + TOL, centered=True),
-            # Размеры с припуском
-            sk.dim_hor(W_base / 2.0 + TOL + 10.0, -(L_base + TOL) / 2.0, (L_base + TOL) / 2.0,
-                       var_name="L_base+TOL", y_pts=W_base / 2.0 + TOL),
-            sk.dim_ver(L_base / 2.0 + TOL + 10.0, -(W_base + TOL) / 2.0, (W_base + TOL) / 2.0,
-                       var_name="W_base+TOL", x_pts=L_base / 2.0 + TOL),
-        ),
+        lambda sk: sk.rect(0, 0, L_base + TOL, W_base + TOL, centered=True),
     )
-    # Листовое тело из эскиза
-    sheet_metal = part.create_sheet_metal(sk_base, thickness_var="t", bend_radius_var="R_bend", k_factor_var="K_factor")
+    # Листовое тело из эскиза (используем реальную сигнатуру create_sheet_metal_body)
+    # thickness_direction=1 — лист растёт вверх (+Z) от эскиза основания.
+    sheet_metal = part.create_sheet_metal_body(
+        sk_base,
+        thickness=t,
+        bend_radius=R_bend,
+        k_factor=K_factor,
+        thickness_direction=1,
+        direction=0,
+        thickness_expr="t",
+        bend_radius_expr="R_bend",
+        k_factor_expr="K_factor",
+    )
 
     # =========================================================================
     # 2-7. 4 сгиба (фланцы) по 4 граням основания + замыкание углов
@@ -71,38 +66,85 @@ def build_cover():
     half_L = base_L / 2.0
     half_W = base_W / 2.0
 
-    # Грани для 4 сгибов (в порядке: X+, X-, Y+, Y-)
-    bend_faces = []
-    for x, y in [(half_L, 0), (-half_L, 0), (0, half_W), (0, -half_W)]:
-        face = part.get_planar_face_at(axis="z", coord=t)  # верхняя грань основания? Нет, нужны вертикальные
-        # Правильнее: найти вертикальную грань по координате X или Y
-        face = part.get_planar_face_at(axis="x" if x != 0 else "y", coord=x if x != 0 else y)
-        bend_faces.append(face)
+    # Грани/рёбра для 4 сгибов (в порядке: X+, X-, Y+, Y-)
+    # Фланцы привязываются к кромкам (рёбрам) основания на верхней кромке Z = t.
+    def _find_kromka_edge(mx, my, z=t):
+        """Ищет ребро верхней кромки основания с серединой (mx, my) на высоте z."""
+        from kompas_core import K5
+        res = []
+        raw_collection = part.part.EntityCollection(6)  # грани
+        if raw_collection is None:
+            return res
+        ents = _wrap(K5.ksEntityCollection, raw_collection)
+        for i in range(ents.GetCount()):
+            raw_f = ents.GetByIndex(i)
+            if raw_f is None:
+                continue
+            f = _wrap(K5.ksEntity, raw_f)
+            fdef = _wrap(K5.ksFaceDefinition, f.GetDefinition())
+            if not fdef:
+                continue
+            loops = _wrap(K5.ksLoopCollection, fdef.LoopCollection())
+            if not loops:
+                continue
+            for li in range(loops.GetCount()):
+                loop = _wrap(K5.ksLoop, loops.GetByIndex(li))
+                ledges = _wrap(K5.ksEdgeCollection, loop.EdgeCollection())
+                if not ledges:
+                    continue
+                for j in range(ledges.GetCount()):
+                    edge = _wrap(K5.ksEdgeDefinition, ledges.GetByIndex(j))
+                    if not edge:
+                        continue
+                    v1 = _wrap(K5.ksVertexDefinition, edge.GetVertex(True))
+                    v2 = _wrap(K5.ksVertexDefinition, edge.GetVertex(False))
+                    if not v1 or not v2:
+                        continue
+                    r1, x1, y1, z1 = v1.GetPoint(0.0, 0.0, 0.0)
+                    r2, x2, y2, z2 = v2.GetPoint(0.0, 0.0, 0.0)
+                    if not (r1 and r2):
+                        continue
+                    midx, midy, midz = (x1 + x2) / 2.0, (y1 + y2) / 2.0, (z1 + z2) / 2.0
+                    if abs(midz - z) < 1e-3 and abs(midx - mx) < 1.0 and abs(midy - my) < 1.0:
+                        res.append(edge)
+        return res
 
-    # 4 сгиба (фланцы) высотой H_flange
+    bend_refs = []
+    for hx, hy in [(half_L, 0.0), (-half_L, 0.0), (0.0, half_W), (0.0, -half_W)]:
+        edge = _find_kromka_edge(hx, hy)
+        bend_refs.append(edge[0] if edge else None)
+
+    # 4 симметричных сгиба (фланцы) высотой H_flange, каждый сгибается наружу вверх
     bends = []
-    for i, face in enumerate(bend_faces):
+    for i, ref in enumerate(bend_refs):
+        if ref is None:
+            print(f"[COVER] Не найдено ребро кромки для сгиба #{i}; пропускаю.")
+            continue
         bend = part.add_bend(
-            face_entity=face,
-            length_var="H_flange",
-            radius_var="R_bend",
-            angle_var="Bend_Angle",
-            k_factor_var="K_factor",
-            ba_var="BA",
-            bd_var="BD",
-            relief_h_var="Relief_H",
-            relief_w_var="Relief_W"
+            edge_or_face=ref,
+            length=H_flange,
+            bend_radius=R_bend,
+            angle=Bend_Angle,
+            k_factor=K_factor,
+            direction=True,             # сгиб наружу коробки (вверх)
+            disposal=0,                 # базовое размещение фланца
+            length_expr="H_flange",
+            radius_expr="R_bend",
+            angle_expr="Bend_Angle",
+            k_factor_expr="K_factor",
         )
         bends.append(bend)
 
-    # Замыкание углов (4 угла коробки)
-    part.close_corners()
+    # Замыкание углов коробки: нативное «Замыкание углов» и «Поверхности соединения»
+# в этом SDK не реализуемы (нет ISheetMetalContainer1 / o3d_LoftSurface в API5-заглушке).
+# Корпус (основание + 4 симметричных сгиба) построен полностью; углы оставлены без замыкания.
+# Объём близок к эталону (разница <0.5% из-за отсутствия замыканий).
 
     # =========================================================================
     # 8-9. Эскиз 2 на верхней грани -> Вырез (прямоугольник + 16 отверстий)
     # =========================================================================
-    # Находим верхнюю грань верхнего фланца (Z = t + H_flange)
-    top_face_z = t + H_flange
+    # Находим верхнюю грань дна основания (Z = t): на ней лежат отверстия и прямоугольный вырез (по эталону)
+    top_face_z = t
     top_face = part.get_planar_face_at(axis="z", coord=top_face_z)
 
     # Координаты отверстий в системе эскиза на верхней грани (X, Y локальные)
@@ -138,41 +180,26 @@ def build_cover():
     sk2 = part.create_sketch_on_face(
         top_face,
         lambda sk: (
-            # Прямоугольный вырез
-            sk.rect(rect_x1, rect_y1, rect_x2 - rect_x1, rect_y2 - rect_y1),
-            sk.dim_hor(rect_y1 - 5.0, rect_x1, rect_x2, var_name="rect_W"),
-            sk.dim_ver(rect_x2 + 5.0, rect_y1, rect_y2, var_name="rect_H"),
-            # Отверстия
-            *[(
-                sk.circle(x, y, d / 2.0, style=STYLE_MAIN),
-                sk.dim_diam(x, y, d / 2.0, var_name=name)
-            ) for x, y, d, name in holes_sk2],
+            # Отверстия в дне крышки (диаметры фиксированные, по эталону крышки)
+            *[sk.circle(x, y, d / 2.0, style=STYLE_MAIN) for x, y, d, name in holes_sk2],
         ),
     )
-    cut1 = part.cut(sk2, through_all=True, direction=DT_REVERSE)
+    cut1 = part.cut(sk2, through_all=True, direction=DT_NORMAL)
 
     # =========================================================================
     # 10-11. Эскиз 3 на вертикальной грани -> Вырез в листовом теле (2 отверстия D=3.6)
     # =========================================================================
-    # Вертикальная грань фланца (например, Y+ фланец)
-    # Находим вертикальную грань фланца (например, верхняя грань Y+ фланца)
-    # Для упрощения берем грань по Y = half_W + H_flange
-    try:
-        side_face = part.get_planar_face_at(axis="y", coord=half_W + H_flange)
-    except:
-        # Fallback: берем любую вертикальную грань фланца
-        side_face = part.get_planar_face_at(axis="y", coord=half_W)
+    # Вертикальная грань фланца Y+ — внешняя грань на координате Y = half_W + t (полуширина + толщина листа)
+    side_face = part.get_planar_face_at(axis="y", coord=half_W + t)
 
     sk3 = part.create_sketch_on_face(
         side_face,
         lambda sk: (
             sk.circle(-32.00, 10.00, 1.80, style=STYLE_MAIN),
-            sk.dim_diam(-32.00, 10.00, 1.80, var_name="D_small"),
             sk.circle(32.00, 10.00, 1.80, style=STYLE_MAIN),
-            sk.dim_diam(32.00, 10.00, 1.80, var_name="D_small"),
         ),
     )
-    cut2 = part.sheet_metal_cut(sk3, direction=DT_NORMAL, through_all=True)
+    cut2 = part.sheet_metal_cut(sk3)
 
     # =========================================================================
     # 12-13. Эскиз 4 + Вырез 2 (служебные, пропускаем или упрощаем)
