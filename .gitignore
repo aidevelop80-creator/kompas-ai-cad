@@ -11,8 +11,6 @@ sdk_ref/include/
 # Системные файлы
 .claude/settings.local.json
 .vscode/settings.json
-.adcode/
-CLAUDE-WEB-APP-FABLE-5.2.md
 
 # Рабочие локальные файлы и временные файлы
 *.tmp
@@ -24,6 +22,4 @@ tree.md
 
 # Результаты сборки (модели и рендеры)
 output/
-*.m3d
-*.tiff
-*.tif
+build_run.log

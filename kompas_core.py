@@ -1,4 +1,4 @@
-﻿# kompas_core.py — Ядро управления КОМПАС-3D v16.1+ (чистый API7 для размеров + логирование)
+﻿# kompas_core.py — Ядро управления КОМПАС-3D v16.1+ (API5 + API7 + логирование)
 import atexit
 import logging
 import math
@@ -8,7 +8,7 @@ import traceback
 
 import pythoncom
 import win32com.client
-from win32com.client import dynamic
+from win32com.client import VARIANT, dynamic
 
 from sdk_ref import kompas_api5_v16 as K5
 from sdk_ref import kompas_api7_v16 as K7
@@ -83,7 +83,7 @@ def _connect_existing_or_new_kompas(visible: bool = True, task_access: int = 0):
     return api5
 
 
-# Константы КОМПАС-3D (из sdk_ref/include/ksConstants3D.h и ldefin2d.h)
+# Константы КОМПАС-3D (из sdk_ref/include/ksConstants3D.h, ksConstants.h и ldefin2d.h)
 PLANE_XY = 1  # o3d_planeXOY (Синяя в изометрии)
 PLANE_XZ = 2  # o3d_planeXOZ (Зеленая в изометрии, она же Плоскость ZX)
 PLANE_YZ = 3  # o3d_planeYOZ (Красная в изометрии)
@@ -97,39 +97,64 @@ OBJ_FILLET = 34  # o3d_fillet
 OBJ_CHAMFER = 33  # o3d_chamfer
 OBJ_POINT_PATTERN = 507  # o3d_PointDrivenPattern (Массив по точкам)
 OBJ_POINT_3D = 70  # o3d_point3D (Пространственная точка)
-OBJ_BASE_EXTRUDE = 24   # o3d_baseExtrusion
-OBJ_BOSS_EXTRUDE = 25   # o3d_bossExtrusion (Приклеить выдавливанием)
-OBJ_CUT_EXTRUDE = 26    # o3d_cutExtrusion (Вырезать выдавливанием)
-OBJ_BASE_ROTATE = 27    # o3d_baseRotated (Операция вращения)
-OBJ_BOSS_ROTATE = 28    # o3d_bossRotated (Приклеить вращением)
-OBJ_CUT_ROTATE = 29     # o3d_cutRotated (Вырезать вращением)
+OBJ_BASE_EXTRUDE = 24  # o3d_baseExtrusion
+OBJ_BOSS_EXTRUDE = 25  # o3d_bossExtrusion (Приклеить выдавливанием)
+OBJ_CUT_EXTRUDE = 26  # o3d_cutExtrusion (Вырезать выдавливанием)
+OBJ_BASE_ROTATE = 27  # o3d_baseRotated (Операция вращения)
+OBJ_BOSS_ROTATE = 28  # o3d_bossRotated (Приклеить вращением)
+OBJ_CUT_ROTATE = 29  # o3d_cutRotated (Вырезать вращением)
 OBJ_CIRCULAR_COPY = 36  # o3d_circularCopy (Массив по концентрической сетке)
 
-# Additional objects
+# Дополнительные объекты и поверхности
 OBJ_LOFT = 30  # o3d_baseLoft
-OBJ_LOFT_SURFACE = 514  # o3d_LoftSurface (поверхность по сечениям / соединения)
+OBJ_LOFT_SURFACE = 514  # o3d_LoftSurface
 OBJ_RULED_SURFACE = 515  # o3d_RuledSurface
 OBJ_SURFACE_SEW = 96  # o3d_SurfaceSewer
 
-# Sheet Metal objects
-OBJ_SHEET_METAL_BODY = 74      # o3d_sheetMetalBody
-OBJ_SHEET_METAL_BEND = 75      # o3d_sheetMetalBend
-OBJ_SHEET_METAL_LINE_BEND = 76 # o3d_sheetMetalLineBend
-OBJ_SHEET_METAL_HOLE = 77      # o3d_sheetMetalHole
-OBJ_SHEET_METAL_CUT = 78       # o3d_sheetMetalCut
+# Листовой металл
+OBJ_SHEET_METAL_BODY = 74  # o3d_sheetMetalBody
+OBJ_SHEET_METAL_BEND = 75  # o3d_sheetMetalBend
+OBJ_SHEET_METAL_LINE_BEND = 76  # o3d_sheetMetalLineBend
+OBJ_SHEET_METAL_HOLE = 77  # o3d_sheetMetalHole
+OBJ_SHEET_METAL_CUT = 78  # o3d_sheetMetalCut
 OBJ_SHEET_METAL_CLOSED_CORNER = 539  # o3d_sheetMetalClosedCorner
-OBJ_CORNER_RELIEF = 539        # o3d_sheetMetalClosedCorner (alias)
+OBJ_CORNER_RELIEF = 539  # alias
 
 DT_NORMAL = 0  # Прямое направление (на расстояние)
 DT_REVERSE = 1  # Обратное направление
 DT_BOTH = 2  # В оба направления
 DT_MIDDLE = 3  # Средняя плоскость
 
-STYLE_MAIN = 1  # Основная линия контура (синяя)
+STYLE_MAIN = 1  # Основная линия контура
 STYLE_THIN = 2  # Тонкая/вспомогательная линия
 STYLE_AXIS = 3  # Осевая линия (штрихпунктирная)
 
 KO_PARAMETRIC_PARAM = 64  # ko_ParametrizationParam
+KO_LDIM_PARAM = 45  # ko_LDimParam
+
+# Точные коды ограничений ksConstraintTypeEnum (из sdk_ref/include/ksConstants.h)
+KC_UNKNOWN = 0
+KC_FIXED_POINT = 1  # ksCFixedPoint
+KC_POINT_ON_CURVE = 2  # ksCPointOnCurve
+KC_HORIZONTAL = 3  # ksCHorizontal
+KC_VERTICAL = 4  # ksCVertical
+KC_PARALLEL = 5  # ksCParallel
+KC_PERPENDICULAR = 6  # ksCPerpendicular
+KC_EQUAL_LENGTH = 7  # ksCEqualLength
+KC_EQUAL_RADIUS = 8  # ksCEqualRadius
+KC_H_ALIGN_POINTS = 9  # ksCHAlignPoints
+KC_V_ALIGN_POINTS = 10  # ksCVAlignPoints
+KC_MERGE_POINTS = 11  # ksCMergePoints
+KC_ASSOCIATION = 12  # ksCAssociation
+KC_DIM_WITH_VARIABLE = 13  # ksCDimWithVariable
+KC_FIXED_DIM = 14  # ksCFixedDim
+KC_TANGENT_TWO_CURVES = 15  # ksCTangentTwoCurves
+KC_SYMMETRY_TWO_POINTS = 16  # ksCSymmetryTwoPoints
+KC_COLLINEAR = 17  # ksCCollinear
+KC_FIXED_ANGLE = 18  # ksCFixedAngle
+KC_FIXED_LENGTH = 19  # ksCFixedLenght
+KC_POINT_ON_CURVE_MID = 20  # ksCPointOnCurveMiddle
+KC_BISECTOR = 21  # ksCBisector
 
 
 class SketchBuilder:
@@ -143,7 +168,10 @@ class SketchBuilder:
         self.part = part
         self.pending_expressions = []
         self.pending_diam_dims = []  # [(xc, yc, r, angle_deg, var_name)]
-        self.pending_lin_dims = []  # [(x1, y1, x2, y2, px, py, expression)]
+        self.pending_lin_dims = []  # [(x1, y1, x2, y2, px, py, expression, orientation)]
+        self.pending_arcs = []  # [(xc, yc, r, angle1, angle2, direction, style)]
+        self.api5_dims_to_bind = []
+        self.pending_constraints = []  # [("align_h"|"align_v", p1, p2), ("equal_len", seg1, seg2)]
 
     def line(self, x1, y1=None, x2=None, y2=None, style: int = STYLE_MAIN):
         """Отрезок."""
@@ -156,7 +184,7 @@ class SketchBuilder:
             float(x1), float(y1), float(x2), float(y2), int(style)
         )
         log.debug(
-            f"  [2D] Отрезок style={style}: ({x1:.2f}, {y1:.2f}) -> ({x2:.2f}, {y2:.2f}), ref={ref}"
+            f"  [2D] Отрезок style={style}: ({float(x1):.2f}, {float(y1):.2f}) -> ({float(x2):.2f}, {float(y2):.2f}), ref={ref}"
         )
         return self
 
@@ -171,15 +199,16 @@ class SketchBuilder:
         w: float = 10.0,
         h: float = 10.0,
         centered: bool = False,
+        style: int = STYLE_MAIN,
     ):
         """Прямоугольник."""
         x, y, w, h = float(x), float(y), float(w), float(h)
         if centered:
             x, y = x - w / 2.0, y - h / 2.0
-        self.line(x, y, x + w, y)
-        self.line(x + w, y, x + w, y + h)
-        self.line(x + w, y + h, x, y + h)
-        self.line(x, y + h, x, y)
+        self.line(x, y, x + w, y, style=style)
+        self.line(x + w, y, x + w, y + h, style=style)
+        self.line(x + w, y + h, x, y + h, style=style)
+        self.line(x, y + h, x, y, style=style)
         return self
 
     def circle(self, xc=0.0, yc=0.0, r=None, style: int = STYLE_MAIN, **kwargs):
@@ -196,7 +225,34 @@ class SketchBuilder:
             )
         ref = self.doc2d.ksCircle(float(xc), float(yc), float(r), int(style))
         log.debug(
-            f"  [2D] Окружность style={style}: центр=({xc:.2f}, {yc:.2f}), R={float(r):.2f} (D={float(r) * 2:.2f}), ref={ref}"
+            f"  [2D] Окружность style={style}: центр=({float(xc):.2f}, {float(yc):.2f}), R={float(r):.2f} (D={float(r) * 2:.2f}), ref={ref}"
+        )
+        return self
+
+    def arc(
+        self,
+        xc: float,
+        yc: float,
+        r: float,
+        angle1: float,
+        angle2: float,
+        direction: bool = True,
+        style: int = STYLE_MAIN,
+    ):
+        """Регистрирует дугу (xc, yc, r, angle1, angle2) для создания через API7 IArcs."""
+        self.pending_arcs.append(
+            (
+                float(xc),
+                float(yc),
+                float(r),
+                float(angle1),
+                float(angle2),
+                bool(direction),
+                int(style),
+            )
+        )
+        log.debug(
+            f"  [2D ARC QUEUE] Дуга style={style}: центр=({xc:.2f}, {yc:.2f}), R={r:.2f}, углы=({angle1:.1f}, {angle2:.1f})"
         )
         return self
 
@@ -220,7 +276,38 @@ class SketchBuilder:
     def point(self, x: float, y: float, style: int = STYLE_MAIN):
         """Создает 2D-точку (ksPoint)."""
         ref = self.doc2d.ksPoint(float(x), float(y), int(style))
-        log.debug(f"  [2D] Точка: ({x:.2f}, {y:.2f}), ref={ref}")
+        log.debug(f"  [2D] Точка: ({float(x):.2f}, {float(y):.2f}), ref={ref}")
+        return self
+
+    def align_h(self, p1: tuple[float, float], p2: tuple[float, float]):
+        """Выравнивание двух точек (включая середины отрезков и (0,0)) по горизонтали (KC_H_ALIGN_POINTS=9)."""
+        self.pending_constraints.append(
+            ("align_h", (float(p1[0]), float(p1[1])), (float(p2[0]), float(p2[1])))
+        )
+        return self
+
+    def align_v(self, p1: tuple[float, float], p2: tuple[float, float]):
+        """Выравнивание двух точек (включая середины отрезков и (0,0)) по вертикали (KC_V_ALIGN_POINTS=10)."""
+        self.pending_constraints.append(
+            ("align_v", (float(p1[0]), float(p1[1])), (float(p2[0]), float(p2[1])))
+        )
+        return self
+
+    def equal_length(
+        self,
+        seg1: tuple[float, float, float, float],
+        seg2: tuple[float, float, float, float],
+    ):
+        """Равенство длин двух отрезков (KC_EQUAL_LENGTH=7)."""
+        self.pending_constraints.append(
+            ("equal_len", tuple(float(v) for v in seg1), tuple(float(v) for v in seg2))
+        )
+        return self
+
+    def center_on_origin(self, w: float, h: float):
+        """Центрирует симметричный прямоугольник (w x h) относительно (0, 0) через середины сторон."""
+        self.align_v((0.0, float(h) / 2.0), (0.0, 0.0))
+        self.align_h((-float(w) / 2.0, 0.0), (0.0, 0.0))
         return self
 
     def dim_linear(
@@ -232,30 +319,34 @@ class SketchBuilder:
         px: float,
         py: float,
         expression: str = None,
+        orientation: int = None,
     ):
-        """Регистрирует линейный размер между (x1, y1) и (x2, y2) для создания через API7."""
-        if abs(y2 - y1) < 1e-6:
+        """Регистрирует линейный размер между (x1, y1) и (x2, y2) для создания через API7.
+        orientation: 0 — параллельный, 1 — горизонтальный, 2 — вертикальный, None — автоопределение.
+        """
+        x1, y1, x2, y2 = float(x1), float(y1), float(x2), float(y2)
+        if orientation is None:
+            if abs(y2 - y1) < 1e-6 and abs(x2 - x1) > 1e-6:
+                orientation = 1
+            elif abs(x2 - x1) < 1e-6 and abs(y2 - y1) > 1e-6:
+                orientation = 2
+            else:
+                orientation = 0
+
+        if orientation == 1:
             expected_val = abs(x2 - x1)
-        elif abs(x2 - x1) < 1e-6:
+        elif orientation == 2:
             expected_val = abs(y2 - y1)
         else:
             expected_val = math.hypot(x2 - x1, y2 - y1)
 
         self.pending_lin_dims.append(
-            (
-                float(x1),
-                float(y1),
-                float(x2),
-                float(y2),
-                float(px),
-                float(py),
-                expression,
-            )
+            (x1, y1, x2, y2, float(px), float(py), expression, int(orientation))
         )
         if expression:
             self.pending_expressions.append((expected_val, expression))
         log.debug(
-            f"  [2D DIM QUEUE] Линейный размер val={expected_val:.2f}, expr='{expression}'"
+            f"  [2D DIM QUEUE] Линейный размер val={expected_val:.2f}, orient={orientation}, expr='{expression}'"
         )
         return self
 
@@ -266,9 +357,21 @@ class SketchBuilder:
         x2: float,
         var_name: str = None,
         y_pts: float = 0.0,
+        y1: float = None,
+        y2: float = None,
     ):
+        """Горизонтальный линейный размер. Поддерживает разные Y точек привязки через y1/y2."""
+        yy1 = float(y_pts if y1 is None else y1)
+        yy2 = float(y_pts if y2 is None else y2)
         return self.dim_linear(
-            x1, y_pts, x2, y_pts, (x1 + x2) / 2.0, y_line, expression=var_name
+            x1,
+            yy1,
+            x2,
+            yy2,
+            (x1 + x2) / 2.0,
+            y_line,
+            expression=var_name,
+            orientation=1,
         )
 
     def dim_ver(
@@ -278,9 +381,21 @@ class SketchBuilder:
         y2: float,
         var_name: str = None,
         x_pts: float = 0.0,
+        x1: float = None,
+        x2: float = None,
     ):
+        """Вертикальный линейный размер. Поддерживает разные X точек привязки через x1/x2."""
+        xx1 = float(x_pts if x1 is None else x1)
+        xx2 = float(x_pts if x2 is None else x2)
         return self.dim_linear(
-            x_pts, y1, x_pts, y2, x_line, (y1 + y2) / 2.0, expression=var_name
+            xx1,
+            y1,
+            xx2,
+            y2,
+            x_line,
+            (y1 + y2) / 2.0,
+            expression=var_name,
+            orientation=2,
         )
 
     def dim_diam(
@@ -301,6 +416,88 @@ class SketchBuilder:
             f"  [2D DIM QUEUE] Диаметральный размер D={float(r) * 2:.2f} в ({xc:.2f}, {yc:.2f}), expr='{var_name}'"
         )
         return self
+
+    def dim_linear_api5(
+        self,
+        x1: float,
+        y1: float,
+        x2: float,
+        y2: float,
+        px: float,
+        py: float,
+        expression: str = None,
+        is_horizontal: bool = None,
+    ):
+        """Создает линейный размер через API5 (ksLinDimension)."""
+        if is_horizontal is None:
+            is_horizontal = abs(y2 - y1) < abs(x2 - x1)
+
+        ldim_param = self.api5.GetParamStruct(KO_LDIM_PARAM)
+        spar = ldim_param.GetSPar()
+        spar.Init()
+        spar.x1 = float(x1)
+        spar.y1 = float(y1)
+        spar.x2 = float(x2)
+        spar.y2 = float(y2)
+        spar.basePoint = 1
+        spar.dx = float(px - (x1 + x2) / 2.0)
+        spar.dy = float(py - (y1 + y2) / 2.0)
+        ldim_param.SetSPar(spar)
+
+        dpar = ldim_param.GetDPar()
+        dpar.Init()
+        ldim_param.SetDPar(dpar)
+
+        dim_ref = self.doc2d.ksLinDimension(ldim_param)
+        log.debug(
+            f"  [2D API5] Линейный размер {'H' if is_horizontal else 'V'}: "
+            f"({x1:.2f},{y1:.2f})->({x2:.2f},{y2:.2f}) pt=({px:.2f},{py:.2f}), ref={dim_ref}, expr='{expression}'"
+        )
+        if expression and dim_ref:
+            self.api5_dims_to_bind.append(
+                (dim_ref, float(x1), float(y1), float(x2), float(y2), expression)
+            )
+        return self
+
+    def dim_hor_api5(
+        self,
+        y_line: float,
+        x1: float,
+        x2: float,
+        var_name: str = None,
+        y_pts: float = 0.0,
+    ):
+        """Создает горизонтальный линейный размер через API5."""
+        return self.dim_linear_api5(
+            x1,
+            y_pts,
+            x2,
+            y_pts,
+            (x1 + x2) / 2.0,
+            y_line,
+            expression=var_name,
+            is_horizontal=True,
+        )
+
+    def dim_ver_api5(
+        self,
+        x_line: float,
+        y1: float,
+        y2: float,
+        var_name: str = None,
+        x_pts: float = 0.0,
+    ):
+        """Создает вертикальный линейный размер через API5."""
+        return self.dim_linear_api5(
+            x_pts,
+            y1,
+            x_pts,
+            y2,
+            x_line,
+            (y1 + y2) / 2.0,
+            expression=var_name,
+            is_horizontal=False,
+        )
 
     def parametrize(self):
         """Накладывает автоматические параметрические связи API5."""
@@ -323,11 +520,8 @@ class SketchBuilder:
         pp.angleLimit = 1.0
         for k in getattr(pp, "_prop_map_put_", {}).keys():
             if "dim" in k.lower() or "fix" in k.lower():
-                try:
-                    setattr(pp, k, True)
-                    log.debug(f"  [2D PARAM] Включено свойство pp.{k} = True")
-                except Exception:
-                    pass
+                setattr(pp, k, True)
+                log.debug(f"  [2D PARAM] Включено свойство pp.{k} = True")
         res = self.doc2d.ksParametrizeObjects(0, _ole(pp))
         log.debug(f"  [2D PARAM] ksParametrizeObjects завершен (res={res})")
 
@@ -414,29 +608,20 @@ class KompasPart:
         return _wrap(K5.ksEntity, self.part.GetDefaultEntity(plane))
 
     def create_offset_plane(self, base_plane: str | int | object, offset: float):
-        """Создает смещенную плоскость параллельно базовой.
-        base_plane: имя базовой плоскости ("xy", "xz", "yz"), её тип (int), или ksEntity грани/плоскости.
-        """
-        # Если передан ksEntity (грань или плоскость), используем его напрямую
+        """Создает смещенную плоскость параллельно базовой."""
         if not isinstance(base_plane, (str, int)):
-            base_ent_raw = _ole(base_plane)
+            base_ent = _wrap(K5.ksEntity, base_plane)
         else:
-            # Получаем базовую плоскость как сырой COM-объект
-            if isinstance(base_plane, str):
-                p_map = {
-                    "xy": PLANE_XY, "xoy": PLANE_XY, "yx": PLANE_XY,
-                    "xz": PLANE_XZ, "xoz": PLANE_XZ, "zx": PLANE_XZ,
-                    "yz": PLANE_YZ, "yoz": PLANE_YZ, "zy": PLANE_YZ,
-                }
-                plane_type = p_map.get(base_plane.lower().strip(), PLANE_XY)
-            else:
-                plane_type = base_plane
-            base_ent_raw = self.part.GetDefaultEntity(plane_type)
+            base_ent = self.get_base_plane(base_plane)
 
         ent = _wrap(K5.ksEntity, self.part.NewEntity(OBJ_PLANE_OFFSET))
         defn = _wrap(K5.ksPlaneOffsetDefinition, ent.GetDefinition())
-        # Передаем сырой COM-объект базовой плоскости/грани
-        defn.SetPlane(base_ent_raw)
+        base_ent_raw = _ole(base_ent)
+        try:
+            defn.SetPlane(base_ent_raw)
+        except Exception:
+            dyn_defn = dynamic.DumbDispatch(defn._oleobj_)
+            dyn_defn.SetPlane(base_ent_raw)
         defn.direction = True if offset >= 0 else False
         defn.offset = abs(float(offset))
         if not ent.Create():
@@ -474,18 +659,17 @@ class KompasPart:
         defn.SetFace(_ole(face_entity))
         if not ent.Create():
             log.error("[FAIL AXIS] Не удалось создать ось по цилиндрической грани!")
-            raise RuntimeError("[FAIL AXIS] Не удалось создать ось по цилиндрической грани!")
+            raise RuntimeError(
+                "[FAIL AXIS] Не удалось создать ось по цилиндрической грани!"
+            )
         self.part.Update()
         log.info(f"Создана конструктивная ось по цилиндрической грани: '{ent.name}'")
         return ent
 
     def create_plane_by_3_points(self, p1: tuple, p2: tuple, p3: tuple):
-        """Создает плоскость по 3 точкам (o3d_plane3Points = 16).
-        p1, p2, p3 — кортежи (x, y, z) координат точек.
-        """
-        ent = _wrap(K5.ksEntity, self.part.NewEntity(16))  # OBJ_PLANE_3POINTS = 16
+        """Создает плоскость по 3 точкам (o3d_plane3Points = 16)."""
+        ent = _wrap(K5.ksEntity, self.part.NewEntity(16))
         defn = _wrap(K5.ksPlane3PointsDefinition, ent.GetDefinition())
-        # Создаем 3 точки
         pt1 = self.create_point3d(p1[0], p1[1], p1[2])
         pt2 = self.create_point3d(p2[0], p2[1], p2[2])
         pt3 = self.create_point3d(p3[0], p3[1], p3[2])
@@ -493,9 +677,11 @@ class KompasPart:
         defn.SetPoint(2, _ole(pt2))
         defn.SetPoint(3, _ole(pt3))
         if not ent.Create():
-            log.error(f"[FAIL PLANE 3PTS] Не удалось создать плоскость по 3 точкам!")
+            log.error("[FAIL PLANE 3PTS] Не удалось создать плоскость по 3 точкам!")
             self.close()
-            raise RuntimeError("[FAIL PLANE 3PTS] Не удалось создать плоскость по 3 точкам!")
+            raise RuntimeError(
+                "[FAIL PLANE 3PTS] Не удалось создать плоскость по 3 точкам!"
+            )
         self.part.Update()
         log.info(f"Создана плоскость по 3 точкам: '{ent.name}'")
         return ent
@@ -520,26 +706,41 @@ class KompasPart:
         return None
 
     def create_point3d(self, x: float, y: float, z: float):
-        """Создает пространственную точку (o3d_point3D = 70) по координатам через API5 определение."""
-        # 1. Создаём сущность через API5
-        ent = _wrap(K5.ksEntity, self.part.NewEntity(OBJ_POINT_3D))
-        defn_raw = ent.GetDefinition()
-        dyn_defn = dynamic.DumbDispatch(defn_raw)
+        """Создает пространственную точку (o3d_point3D = 70) через API7 IPoint3D."""
+        if not self.api7:
+            raise RuntimeError(
+                "[FAIL POINT3D] API7 недоступен для создания пространственных точек!"
+            )
 
-        # 2. Настраиваем определение ТЕРЕД Create
-        dyn_defn.ParameterType = 1  # ksPParamCoord = 1
-        dyn_defn.X = float(x)
-        dyn_defn.Y = float(y)
-        dyn_defn.Z = float(z)
+        part7 = self._get_part7()
+        if not part7:
+            raise RuntimeError("[FAIL POINT3D] Не удалось получить IPart7!")
 
-        # 3. Создаём точку
-        if not ent.Create():
-            log.error(f"[FAIL POINT3D] Не удалось создать сущность точки в ({x}, {y}, {z})!")
-            raise RuntimeError("[FAIL POINT3D] Не удалось создать пространственную точку!")
+        dyn_part7 = dynamic.DumbDispatch(_ole(part7))
+        points3d = _wrap(K7.IPoints3D, dyn_part7.Points3D)
+        if points3d is None:
+            raise RuntimeError("[FAIL POINT3D] Не удалось получить коллекцию Points3D!")
+
+        point3d = _wrap(K7.IPoint3D, points3d.Add())
+        if not point3d:
+            raise RuntimeError("[FAIL POINT3D] Points3D.Add() вернул None!")
+
+        point3d.ParameterType = 1  # ksPParamCoord
+        point3d.X = float(x)
+        point3d.Y = float(y)
+        point3d.Z = float(z)
+
+        if not point3d.Update():
+            log.error(
+                f"[FAIL POINT3D] Не удалось создать пространственную точку в ({x}, {y}, {z})!"
+            )
+            raise RuntimeError(
+                "[FAIL POINT3D] Не удалось создать пространственную точку!"
+            )
+
         self.part.Update()
-
-        log.info(f"Создана пространственная точка: '{ent.name}' ({x:.2f}, {y:.2f}, {z:.2f})")
-        return ent
+        log.info(f"Создана пространственная точка: ({x:.2f}, {y:.2f}, {z:.2f})")
+        return point3d
 
     def _get_face_bbox(
         self, face_def
@@ -575,11 +776,21 @@ class KompasPart:
     ):
         """Находит плоскую грань детали, перпендикулярную выбранной оси ('x', 'y' или 'z')."""
         axis_idx = {"x": 0, "y": 1, "z": 2}[axis.lower().strip()]
-        part_ents = _wrap(K5.ksEntityCollection, self.part.EntityCollection(OBJ_FACE))
-        candidates = []
 
-        for i in range(part_ents.GetCount()):
-            ent = _wrap(K5.ksEntity, part_ents.GetByIndex(i))
+        raw_collection = self.part.EntityCollection(OBJ_FACE)
+        if raw_collection is None:
+            raise RuntimeError("[FAIL FACE] EntityCollection(OBJ_FACE) returned None!")
+        part_ents = _wrap(K5.ksEntityCollection, raw_collection)
+
+        candidates = []
+        count = part_ents.GetCount()
+        log.debug(f"[FACE SEARCH] EntityCollection count: {count}")
+
+        for i in range(count):
+            raw_ent = part_ents.GetByIndex(i)
+            if raw_ent is None:
+                continue
+            ent = _wrap(K5.ksEntity, raw_ent)
             fdef = _wrap(K5.ksFaceDefinition, ent.GetDefinition())
             if not fdef or not fdef.IsPlanar():
                 continue
@@ -597,9 +808,6 @@ class KompasPart:
         )
 
         if not candidates:
-            log.error(
-                f"[FAIL FACE] Не найдено плоских граней перпендикулярно оси {axis.upper()}!"
-            )
             raise RuntimeError(
                 f"[FAIL FACE] Не найдено плоских граней перпендикулярно оси {axis.upper()}!"
             )
@@ -611,9 +819,6 @@ class KompasPart:
                         f"[FACE SELECT] Выбрана плоская грань на {axis.upper()}={pos:.2f} (запрошено {coord})"
                     )
                     return ent
-            log.error(
-                f"[FAIL FACE] Плоская грань на {axis.upper()}={coord} не найдена! Доступные: {avail}"
-            )
             raise RuntimeError(
                 f"[FAIL FACE] Плоская грань на {axis.upper()}={coord} не найдена! Доступные координаты: {avail}"
             )
@@ -666,75 +871,78 @@ class KompasPart:
                 return sf
         return None
 
-    def _attach_line_dim_to_segments(self, ld, all_lsegs, x1: float, y1: float, x2: float, y2: float):
-        """Привязывает ножки линейного размера (Index=1 и Index=2) к вершинам отрезков эскиза через ConstraintType=6 (MergePoints)."""
+    def _attach_line_dim_to_objects(
+        self,
+        ld,
+        all_lsegs: list,
+        x1: float,
+        y1: float,
+        x2: float,
+        y2: float,
+        extra_pts: list = None,
+    ):
+        """Привязывает ножки линейного размера (Index=1 и Index=2) к вершинам отрезков,
+        2D-точкам или центрам окружностей через KC_MERGE_POINTS (11).
+        """
         dobj_ld = _wrap(K7.IDrawingObject1, ld)
-        for pt_idx, (px, py) in ((1, (x1, y1)), (2, (x2, y2))):
+        candidates = []
+        for ls in all_lsegs:
+            candidates.append((ls.X1, ls.Y1, ls, 0))
+            candidates.append((ls.X2, ls.Y2, ls, 1))
+        if extra_pts:
+            candidates.extend(extra_pts)
+
+        for pt_idx, (px, py) in ((0, (x1, y1)), (1, (x2, y2))):
             attached = False
-            for ls in all_lsegs:
-                for v_idx, (vx, vy) in ((1, (ls.X1, ls.Y1)), (2, (ls.X2, ls.Y2))):
-                    if math.hypot(vx - px, vy - py) < 1e-2:
-                        try:
-                            con = _wrap(K7.IParametriticConstraint, dobj_ld.NewConstraint())
-                            con.ConstraintType = 6  # ksCMergePoints — совпадение точек
-                            con.Index = pt_idx
-                            con.Partner = _ole(ls)
-                            con.PartnerIndex = v_idx
-                            if con.Create():
-                                attached = True
-                                break
-                        except Exception:
-                            pass
-                if attached:
-                    break
+            for vx, vy, partner, p_idx in candidates:
+                if math.hypot(vx - px, vy - py) < 1e-2:
+                    con = _wrap(K7.IParametriticConstraint, dobj_ld.NewConstraint())
+                    con.ConstraintType = KC_MERGE_POINTS  # 11
+                    con.Index = pt_idx
+                    con.Partner = _ole(partner)
+                    con.PartnerIndex = p_idx
+                    if con.Create():
+                        attached = True
+                        break
+            if not attached:
+                log.debug(
+                    f"  [API7 DIM ATTACH] Точка размера Index={pt_idx} ({px:.2f}, {py:.2f}) не привязана к геометрии"
+                )
         ld.Update()
 
-    def _make_dim_driving(self, dim_obj, expr_str: str):
-        """Делает 2D-размер API7 управляющим (ConstraintType=15 — FixedDim) и задает формулу Expression."""
+    def _make_dim_driving(self, dim_obj, expr_str: str = None):
+        """Делает 2D-размер API7 управляющим через KC_DIM_WITH_VARIABLE (13).
+        Если присвоить con_var.Expression на месте не удаётся, формулу задаст _bind_new_vars_to_expressions() через IVariable7.
+        """
         dobj = _wrap(K7.IDrawingObject1, dim_obj)
-        best_ctype = None
-        best_con = None
-        # Сначала пробуем штатный код 15 (FixedDim в КОМПАС API7), затем 1 и остальные
-        try_order = [15, 1] + [c for c in range(101) if c not in (15, 1)]
-        for ctype in try_order:
-            try:
-                con = _wrap(K7.IParametriticConstraint, dobj.NewConstraint())
-                con.ConstraintType = ctype
-                con.Index = 0
-                if con.Create():
-                    if expr_str:
-                        try:
-                            con.Expression = str(expr_str)
-                            best_ctype = ctype
-                            best_con = con
-                            break
-                        except Exception:
-                            try:
-                                con.Delete()
-                            except Exception:
-                                pass
-                            continue
-                    else:
-                        best_ctype = ctype
-                        best_con = con
-                        break
-            except Exception:
-                continue
-        if best_con is not None:
+        con_var = _wrap(K7.IParametriticConstraint, dobj.NewConstraint())
+        con_var.ConstraintType = KC_DIM_WITH_VARIABLE  # 13 — Размер с переменной
+        con_var.Index = 0
+        if con_var.Create():
+            if expr_str:
+                try:
+                    con_var.Expression = str(expr_str)
+                except Exception as e:
+                    log.debug(
+                        f"  [API7 DIM CONSTRAINT] con_var.Expression('{expr_str}') пропущено ({e}), привяжем через IVariable7"
+                    )
             dim_obj.Update()
             log.info(
-                f"  [API7 DIM CONSTRAINT] Размер сделан управляющим ConstraintType={best_ctype} (expr='{expr_str}')"
+                f"  [API7 DIM CONSTRAINT] Размер сделан управляющим KC_DIM_WITH_VARIABLE=13 (expr='{expr_str}')"
             )
-        else:
-            log.warning(
-                f"  [API7 DIM CONSTRAINT] Не удалось сделать размер управляющим (expr='{expr_str}')"
-            )
+            return True
+
+        log.warning(
+            f"  [API7 DIM CONSTRAINT] Не удалось сделать размер управляющим (expr='{expr_str}')"
+        )
+        return False
 
     def _apply_api7_sketch_dims_and_constraints(self, sk_ent, builder: SketchBuilder):
         """
         Открывает эскиз в API7 (ISketch.BeginEdit) и:
-        1. Создает ассоциативные диаметральные (IDiametralDimension) и линейные (ILineDimension) размеры.
-        2. Накладывает параметрические связи API7 (Точка на кривой = 9, Выравнивание по вертикали = 10).
+        1. Создает дуги (IArcs), если они запланированы.
+        2. Создает ассоциативные диаметральные (IDiametralDimension) и линейные (ILineDimension) размеры.
+        3. Накладывает параметрические связи API7 по точным константам ksConstraintTypeEnum.
         """
         sk_feat7 = self._find_sketch_feature7(sk_ent)
         if sk_feat7 is None:
@@ -751,10 +959,81 @@ class KompasPart:
                 dc = _wrap(K7.IDrawingContainer, v0)
                 sym_c = _wrap(K7.ISymbols2DContainer, v0)
 
+                # 0. Создаем дуги (IArcs), если есть
+                if builder.pending_arcs:
+                    arcs = _wrap(K7.IArcs, dc.Arcs)
+                    for xc, yc, r, a1, a2, d_dir, st in builder.pending_arcs:
+                        a = _wrap(K7.IArc, arcs.Add())
+                        a.Xc = xc
+                        a.Yc = yc
+                        a.Radius = r
+                        a.Angle1 = a1
+                        a.Angle2 = a2
+                        a.Direction = d_dir
+                        a.Style = st
+                        a.Update()
+
                 circs = _wrap(K7.ICircles, dc.Circles)
                 all_circles = [
                     _wrap(K7.ICircle, circs.Circle(i)) for i in range(circs.Count)
                 ]
+                lsegs = _wrap(K7.ILineSegments, dc.LineSegments)
+                all_lsegs = [
+                    _wrap(K7.ILineSegment, lsegs.LineSegment(i))
+                    for i in range(lsegs.Count)
+                ]
+                pts_col = _wrap(K7.IPoints, dc.Points)
+                all_points = [
+                    _wrap(K7.IPoint, pts_col.Point(i)) for i in range(pts_col.Count)
+                ]
+
+                # Проверяем необходимость опорной точки в начале координат (0, 0)
+                ORIGIN_THRESHOLD = 1e-2
+                origin_circles = [
+                    c for c in all_circles if math.hypot(c.Xc, c.Yc) < ORIGIN_THRESHOLD
+                ]
+                offset_circles = [
+                    c for c in all_circles if math.hypot(c.Xc, c.Yc) >= ORIGIN_THRESHOLD
+                ]
+                con_uses_origin = any(
+                    item[0] in ("align_h", "align_v")
+                    and (
+                        math.hypot(item[1][0], item[1][1]) < ORIGIN_THRESHOLD
+                        or math.hypot(item[2][0], item[2][1]) < ORIGIN_THRESHOLD
+                    )
+                    for item in builder.pending_constraints
+                )
+                lin_uses_origin = con_uses_origin or any(
+                    math.hypot(x1, y1) < ORIGIN_THRESHOLD
+                    or math.hypot(x2, y2) < ORIGIN_THRESHOLD
+                    for x1, y1, x2, y2, *_ in builder.pending_lin_dims
+                )
+
+                origin_point = None
+                for p in all_points:
+                    if math.hypot(p.X, p.Y) < ORIGIN_THRESHOLD:
+                        origin_point = p
+                        break
+
+                if origin_point is None and (origin_circles or lin_uses_origin):
+                    origin_point = _wrap(K7.IPoint, pts_col.Add())
+                    origin_point.X = 0.0
+                    origin_point.Y = 0.0
+                    origin_point.Update()
+                    all_points.append(origin_point)
+
+                if origin_point is not None:
+                    dobj_pt = _wrap(K7.IDrawingObject1, origin_point)
+                    con_fix_pt = _wrap(
+                        K7.IParametriticConstraint, dobj_pt.NewConstraint()
+                    )
+                    con_fix_pt.ConstraintType = KC_FIXED_POINT  # 1
+                    con_fix_pt.Index = 0
+                    if con_fix_pt.Create():
+                        log.info(
+                            "  [API7 CONSTRAINTS] Точка в (0,0) зафиксирована через KC_FIXED_POINT (1)"
+                        )
+                    origin_point.Update()
 
                 # 1. Создаем ассоциативные диаметральные размеры (IDiametralDimensions)
                 if builder.pending_diam_dims:
@@ -769,6 +1048,17 @@ class KompasPart:
                                 target_c = c
                                 break
                         if target_c is None:
+                            matches = [
+                                c for c in all_circles if abs(c.Radius - r) < 1e-2
+                            ]
+                            if len(matches) == 1:
+                                target_c = matches[0]
+                            elif len(matches) > 1:
+                                target_c = min(
+                                    matches,
+                                    key=lambda c: math.hypot(c.Xc - xc, c.Yc - yc),
+                                )
+                        if target_c is None:
                             log.warning(
                                 f"  [API7 DIM] Не найдена окружность R={r} в ({xc},{yc}) для размера '{var_name}'"
                             )
@@ -780,138 +1070,62 @@ class KompasPart:
                         dd.Angle = float(angle_deg)
                         ok_dd = dd.Update()
                         log.debug(
-                            f"  [API7 DIM] Создан IDiametralDimension для R={r:.2f} (D={r * 2:.2f}), "
-                            f"expr='{var_name}' -> update={ok_dd}"
+                            f"  [API7 DIM] IDiametralDimension R={r:.2f} (D={r * 2:.2f}), expr='{var_name}' -> update={ok_dd}"
                         )
                         self._make_dim_driving(dd, var_name)
 
-                # 2. Создаем линейные размеры (ILineDimensions), если есть
+                # 2. Создаем линейные размеры (ILineDimensions)
                 if builder.pending_lin_dims:
-                    lsegs = _wrap(K7.ILineSegments, dc.LineSegments)
-                    all_lsegs = [
-                        _wrap(K7.ILineSegment, lsegs.LineSegment(i))
-                        for i in range(lsegs.Count)
-                    ]
+                    extra_pts = [(p.X, p.Y, p, 0) for p in all_points]
+                    extra_pts.extend((c.Xc, c.Yc, c, 0) for c in all_circles)
+
                     ldims = _wrap(K7.ILineDimensions, sym_c.LineDimensions)
-                    for x1, y1, x2, y2, px, py, expr in builder.pending_lin_dims:
-                        raw_dim = ldims.Add()
-                        log.info(
-                            f"[API7 DIM LIN] Создаю линейный размер expr='{expr}': ({x1:.2f},{y1:.2f})->({x2:.2f},{y2:.2f}) pts=({px:.2f},{py:.2f})"
-                        )
-                        ld = _wrap(K7.ILineDimension, raw_dim)
+                    for (
+                        x1,
+                        y1,
+                        x2,
+                        y2,
+                        px,
+                        py,
+                        expr,
+                        orient,
+                    ) in builder.pending_lin_dims:
+                        ld = _wrap(K7.ILineDimension, ldims.Add())
                         if ld is None:
-                            log.error(f"  [API7 DIM LIN] ldims.Add() вернул None для expr='{expr}'")
+                            log.error(
+                                f"  [API7 DIM LIN] ldims.Add() вернул None для expr='{expr}'"
+                            )
                             continue
                         ld.X1, ld.Y1 = x1, y1
                         ld.X2, ld.Y2 = x2, y2
                         ld.X3, ld.Y3 = px, py
-                        if abs(y2 - y1) < 1e-6 and abs(x2 - x1) > 1e-6:
-                            ld.Orientation = 1
-                        elif abs(x2 - x1) < 1e-6 and abs(y2 - y1) > 1e-6:
-                            ld.Orientation = 2
-                        else:
-                            ld.Orientation = 0
-                        ok_ld = ld.Update()
-                        if not ok_ld:
-                            log.error(f"  [API7 DIM LIN] ld.Update() вернул False для expr='{expr}'")
+                        ld.Orientation = int(orient)
+                        if not ld.Update():
+                            log.error(
+                                f"  [API7 DIM LIN] ld.Update() вернул False для expr='{expr}'"
+                            )
                             continue
-                        # Попробуем привязать выражение напрямую к объекту размера
-                        dobj = _wrap(K7.IDrawingObject1, ld)
-                        try:
-                            dobj.Expression = str(expr)
-                            log.info(f"  [API7 DIM LIN] выражение '{expr}' привязано напрямую")
-                        except Exception as e:
-                            log.warning(f"  [API7 DIM LIN] прямая привязка не удалась: {e}")
-                            self._attach_line_dim_to_segments(ld, all_lsegs, x1, y1, x2, y2)
-                            self._make_dim_driving(ld, expr)
+                        self._attach_line_dim_to_objects(
+                            ld, all_lsegs, x1, y1, x2, y2, extra_pts=extra_pts
+                        )
+                        self._make_dim_driving(ld, expr)
 
-                # 3. Накладываем параметрические ограничения на окружности
-                # Порог для определения окружностей в начале координат (увеличен для устойчивости к погрешностям)
-                ORIGIN_THRESHOLD = 1e-2
-                origin_circles = [
-                    c for c in all_circles if math.hypot(c.Xc, c.Yc) < ORIGIN_THRESHOLD
-                ]
-                offset_circles = [
-                    c for c in all_circles if math.hypot(c.Xc, c.Yc) >= ORIGIN_THRESHOLD
-                ]
-                log.info(f"  [API7 CONSTRAINTS] Origin circles: {len(origin_circles)}, Offset circles: {len(offset_circles)}")
-                for c in origin_circles:
-                    log.info(f"    Origin circle: R={c.Radius:.2f}, center=({c.Xc:.6f}, {c.Yc:.6f})")
-                for c in offset_circles:
-                    log.info(f"    Offset circle: R={c.Radius:.2f}, center=({c.Xc:.6f}, {c.Yc:.6f}), dist={math.hypot(c.Xc, c.Yc):.6f}")
-
-                # Создаём точку в начале координат (0,0) и фиксируем её через Horizontal+Vertical
-                # Это даст нам опорную точку для привязки центров окружностей
-                origin_point = None
-                if origin_circles:
-                    try:
-                        points = _wrap(K7.IPoints, dc.Points)
-                        origin_point = _wrap(K7.IPoint, points.Add())
-                        # Устанавливаем координаты точки в (0,0)
-                        origin_point.X = 0.0
-                        origin_point.Y = 0.0
-                        origin_point.Update()
-                        # Фиксируем точку через Horizontal (1) + Vertical (2) на самой точке
-                        # Fix (0) на точке не работает, но Horizontal+Vertical зафиксируют X и Y
-                        dobj_pt = _wrap(K7.IDrawingObject1, origin_point)
-                        for fix_code, name in [(1, "Horizontal"), (2, "Vertical")]:
-                            con_fix_pt = _wrap(K7.IParametriticConstraint, dobj_pt.NewConstraint())
-                            con_fix_pt.ConstraintType = fix_code
-                            con_fix_pt.Index = 0
-                            if con_fix_pt.Create():
-                                log.info(f"  [API7 CONSTRAINTS] Точка в (0,0) зафиксирована через {name} (ConstraintType={fix_code})")
-                            else:
-                                log.warning(f"  [API7 CONSTRAINTS] {name} constraint на точке не применился (Create вернул False)")
-                        origin_point.Update()
-                        log.info("  [API7 CONSTRAINTS] Создана и зафиксирована точка в начале координат (0,0)")
-                    except Exception as e:
-                        log.warning(f"  [API7 CONSTRAINTS] Не удалось создать точку в (0,0): {e}")
-                        origin_point = None
-
-                # Фиксируем центры окружностей в начале координат через выравнивание с точкой
+                # 3. Ограничения на окружности
                 for c0 in origin_circles:
                     dobj0 = _wrap(K7.IDrawingObject1, c0)
-                    if origin_point:
-                        # Выравнивание по вертикали (X = 0)
-                        con_al_v = _wrap(K7.IParametriticConstraint, dobj0.NewConstraint())
-                        con_al_v.ConstraintType = 10  # Vertical alignment
-                        con_al_v.Index = 0
-                        con_al_v.Partner = _ole(origin_point)
-                        con_al_v.PartnerIndex = 0
-                        al_v_created = con_al_v.Create()
-                        if al_v_created:
-                            log.info(f"  [API7 CONSTRAINTS] Центр R={c0.Radius:.2f} выравнен по вертикали с точкой (0,0)")
-                        else:
-                            log.warning(f"  [API7 CONSTRAINTS] Vertical alignment для R={c0.Radius:.2f} не применился (Create вернул False)")
-                        # Выравнивание по горизонтали (Y = 0)
-                        con_al_h = _wrap(K7.IParametriticConstraint, dobj0.NewConstraint())
-                        con_al_h.ConstraintType = 11  # Horizontal alignment
-                        con_al_h.Index = 0
-                        con_al_h.Partner = _ole(origin_point)
-                        con_al_h.PartnerIndex = 0
-                        al_h_created = con_al_h.Create()
-                        if al_h_created:
-                            log.info(f"  [API7 CONSTRAINTS] Центр R={c0.Radius:.2f} выравнен по горизонтали с точкой (0,0)")
-                        else:
-                            log.warning(f"  [API7 CONSTRAINTS] Horizontal alignment для R={c0.Radius:.2f} не применился (Create вернул False)")
+                    if origin_point is not None:
+                        con_merge = _wrap(
+                            K7.IParametriticConstraint, dobj0.NewConstraint()
+                        )
+                        con_merge.ConstraintType = KC_MERGE_POINTS  # 11
+                        con_merge.Index = 0
+                        con_merge.Partner = _ole(origin_point)
+                        con_merge.PartnerIndex = 0
+                        if con_merge.Create():
+                            log.info(
+                                f"  [API7 CONSTRAINTS] Центр R={c0.Radius:.2f} совмещен с (0,0) (KC_MERGE_POINTS=11)"
+                            )
                         c0.Update()
-                    else:
-                        # Fallback: пробуем Horizontal (1) если точка не создалась
-                        for fix_code in (1,):
-                            try:
-                                con_fix = _wrap(
-                                    K7.IParametriticConstraint, dobj0.NewConstraint()
-                                )
-                                con_fix.ConstraintType = fix_code
-                                con_fix.Index = 0
-                                if con_fix.Create():
-                                    c0.Update()
-                                    log.info(
-                                        f"  [API7 CONSTRAINTS] Центр окружности R={c0.Radius:.2f} ограничен ConstraintType={fix_code} (fallback)"
-                                    )
-                                    break
-                            except Exception:
-                                continue
 
                 for c_off in offset_circles:
                     dobj_off = _wrap(K7.IDrawingObject1, c_off)
@@ -921,48 +1135,156 @@ class KompasPart:
                             con_poc = _wrap(
                                 K7.IParametriticConstraint, dobj_off.NewConstraint()
                             )
-                            con_poc.ConstraintType = 9  # Точка на кривой
+                            con_poc.ConstraintType = KC_POINT_ON_CURVE  # 2
                             con_poc.Index = 0
                             con_poc.Partner = _ole(c0)
                             ok_poc = con_poc.Create()
                             log.info(
-                                f"  [API7 CONSTRAINTS] 'Точка на кривой' (code=9) -> ok={ok_poc}"
+                                f"  [API7 CONSTRAINTS] KC_POINT_ON_CURVE (2) -> ok={ok_poc}"
                             )
 
                             if abs(c_off.Xc - c0.Xc) < 1e-4:
                                 con_al = _wrap(
                                     K7.IParametriticConstraint, dobj_off.NewConstraint()
                                 )
-                                con_al.ConstraintType = 10  # Выравнивание по вертикали
+                                con_al.ConstraintType = KC_V_ALIGN_POINTS  # 10
                                 con_al.Index = 0
                                 con_al.Partner = _ole(c0)
                                 con_al.PartnerIndex = 0
                                 ok_al = con_al.Create()
                                 log.info(
-                                    f"  [API7 CONSTRAINTS] 'Выравнивание по вертикали' (code=10) -> ok={ok_al}"
+                                    f"  [API7 CONSTRAINTS] KC_V_ALIGN_POINTS (10) -> ok={ok_al}"
                                 )
                             elif abs(c_off.Yc - c0.Yc) < 1e-4:
                                 con_al = _wrap(
                                     K7.IParametriticConstraint, dobj_off.NewConstraint()
                                 )
-                                con_al.ConstraintType = (
-                                    11  # Выравнивание по горизонтали
-                                )
+                                con_al.ConstraintType = KC_H_ALIGN_POINTS  # 9
                                 con_al.Index = 0
                                 con_al.Partner = _ole(c0)
                                 con_al.PartnerIndex = 0
                                 ok_al = con_al.Create()
                                 log.info(
-                                    f"  [API7 CONSTRAINTS] 'Выравнивание по горизонтали' (code=11) -> ok={ok_al}"
+                                    f"  [API7 CONSTRAINTS] KC_H_ALIGN_POINTS (9) -> ok={ok_al}"
                                 )
                             c_off.Update()
                             break
+                # 4. Явные геометрические ограничения (align_h, align_v, equal_len)
+                if builder.pending_constraints:
+                    pt_pool = [(p.X, p.Y, p, 0) for p in all_points]
+                    pt_pool.extend((c.Xc, c.Yc, c, 0) for c in all_circles)
+                    for ls in all_lsegs:
+                        pt_pool.append((ls.X1, ls.Y1, ls, 0))
+                        pt_pool.append((ls.X2, ls.Y2, ls, 1))
+                        pt_pool.append(
+                            ((ls.X1 + ls.X2) / 2.0, (ls.Y1 + ls.Y2) / 2.0, ls, 2)
+                        )
+
+                    def _find_pt(pt_xy):
+                        for vx, vy, obj, idx in pt_pool:
+                            if math.hypot(vx - pt_xy[0], vy - pt_xy[1]) < 1e-2:
+                                return obj, idx
+                        return None, None
+
+                    def _find_seg(seg_pts):
+                        x1s, y1s, x2s, y2s = seg_pts
+                        for ls in all_lsegs:
+                            d1 = math.hypot(ls.X1 - x1s, ls.Y1 - y1s) + math.hypot(
+                                ls.X2 - x2s, ls.Y2 - y2s
+                            )
+                            d2 = math.hypot(ls.X1 - x2s, ls.Y1 - y2s) + math.hypot(
+                                ls.X2 - x1s, ls.Y2 - y1s
+                            )
+                            if min(d1, d2) < 1e-2:
+                                return ls
+                        return None
+
+                    for item in builder.pending_constraints:
+                        kind = item[0]
+                        if kind in ("align_h", "align_v"):
+                            o1, i1 = _find_pt(item[1])
+                            o2, i2 = _find_pt(item[2])
+                            if o1 is not None and o2 is not None:
+                                dobj1 = _wrap(K7.IDrawingObject1, o1)
+                                con = _wrap(
+                                    K7.IParametriticConstraint, dobj1.NewConstraint()
+                                )
+                                con.ConstraintType = (
+                                    KC_H_ALIGN_POINTS
+                                    if kind == "align_h"
+                                    else KC_V_ALIGN_POINTS
+                                )
+                                con.Index = i1
+                                con.Partner = _ole(o2)
+                                con.PartnerIndex = i2
+                                ok = con.Create()
+                                o1.Update()
+                                log.debug(
+                                    f"  [API7 CONSTRAINTS] {kind} {item[1]}<->{item[2]} -> ok={ok}"
+                                )
+                        elif kind == "equal_len":
+                            s1 = _find_seg(item[1])
+                            s2 = _find_seg(item[2])
+                            if s1 is not None and s2 is not None:
+                                dobj1 = _wrap(K7.IDrawingObject1, s1)
+                                con = _wrap(
+                                    K7.IParametriticConstraint, dobj1.NewConstraint()
+                                )
+                                con.ConstraintType = KC_EQUAL_LENGTH
+                                con.Index = -1
+                                con.Partner = _ole(s2)
+                                con.PartnerIndex = -1
+                                ok = con.Create()
+                                s1.Update()
+                                log.debug(f"  [API7 CONSTRAINTS] equal_len -> ok={ok}")
             finally:
                 sk7.EndEdit()
         except Exception as e:
             log.error(
                 f"  [API7 SKETCH ERROR] Исключение при создании размеров/связей: {e}\n{traceback.format_exc()}"
             )
+
+    def _finalize_api7_driving_dims(self, sk_ent):
+        """Добавляет KC_FIXED_DIM (14) ко всем размерам эскиза ПОСЛЕ появления type=13 и переменных v...,
+        чтобы размеры стали управляющими (не информационными).
+        """
+        sk_feat7 = self._find_sketch_feature7(sk_ent)
+        if sk_feat7 is None:
+            return
+        sk7 = _wrap(K7.ISketch, sk_feat7)
+        doc2d_7 = _wrap(K7.IKompasDocument2D, sk7.BeginEdit())
+        try:
+            v_mgr = _wrap(K7.IViewsAndLayersManager, doc2d_7.ViewsAndLayersManager)
+            views = _wrap(K7.IViews, v_mgr.Views)
+            v0 = _wrap(K7.IView, views.ActiveView)
+            sym_c = _wrap(K7.ISymbols2DContainer, v0)
+            ddims = _wrap(K7.IDiametralDimensions, sym_c.DiametralDimensions)
+            ldims = _wrap(K7.ILineDimensions, sym_c.LineDimensions)
+
+            dims = [ddims.DiametralDimension(i) for i in range(ddims.Count)]
+            dims.extend(ldims.LineDimension(i) for i in range(ldims.Count))
+
+            for dim_obj in dims:
+                dobj = _wrap(K7.IDrawingObject1, dim_obj)
+                raw_cons = dobj.Constraints
+                cons_list = (
+                    list(raw_cons)
+                    if isinstance(raw_cons, (list, tuple))
+                    else ([raw_cons] if raw_cons is not None else [])
+                )
+                has_fixed = any(
+                    _wrap(K7.IParametriticConstraint, c).ConstraintType == KC_FIXED_DIM
+                    for c in cons_list
+                )
+                if not has_fixed:
+                    con = _wrap(K7.IParametriticConstraint, dobj.NewConstraint())
+                    con.ConstraintType = KC_FIXED_DIM  # 14
+                    con.Index = 0
+                    ok = con.Create()
+                    dim_obj.Update()
+                    log.info(f"  [API7 DIM FINALIZE] KC_FIXED_DIM (14) -> ok={ok}")
+        finally:
+            sk7.EndEdit()
 
     def create_sketch(self, plane="xy", draw_fn=None, auto_parametrize: bool = True):
         """Создает эскиз на базовой плоскости или плоской грани, рисует геометрию и размеры, привязывает формулы."""
@@ -1012,12 +1334,18 @@ class KompasPart:
             self._active_sketch_def = None
             self.part.Update()
 
-        # Шаг 2: Создаем размеры и накладываем ограничения через API7 (включая привязку к точке (0,0))
-        if auto_parametrize or builder.pending_diam_dims or builder.pending_lin_dims:
+        # Шаг 2: Создаем дуги, размеры и накладываем ограничения через API7
+        if (
+            auto_parametrize
+            or builder.pending_diam_dims
+            or builder.pending_lin_dims
+            or builder.pending_arcs
+            or builder.pending_constraints
+        ):
             self._apply_api7_sketch_dims_and_constraints(sk_ent, builder)
             self.part.Update()
 
-        # Шаг 3: Запускаем ksParametrizeObjects ПОСЛЕ создания размеров и ограничений — автоналожение оставшихся связей
+        # Шаг 3: Запускаем ksParametrizeObjects ПОСЛЕ размеров и ограничений
         if auto_parametrize:
             doc2d = sk_def.BeginEdit()
             try:
@@ -1026,8 +1354,17 @@ class KompasPart:
             finally:
                 sk_def.EndEdit()
             self.part.Update()
+        # Шаг 3.2: Делаем все размеры управляющими (добавляем KC_FIXED_DIM=14 поверх type=13)
+        if builder.pending_diam_dims or builder.pending_lin_dims:
+            self._finalize_api7_driving_dims(sk_ent)
+            self.part.Update()
 
-        # Шаг 4: Привязываем формулы ('D', 'ds', 'o1', 'do', 'o2') к новым переменным v...
+        # Шаг 3.5: Привязываем выражения к размерам API5, если использовались
+        if builder.api5_dims_to_bind:
+            self._bind_api5_dimension_expressions(sk_ent, builder.api5_dims_to_bind)
+            self.part.Update()
+
+        # Шаг 4: Привязываем формулы к новым переменным v...
         if builder.pending_expressions:
             self._bind_new_vars_to_expressions(
                 vars_before, builder.pending_expressions, context=sk_ent.name
@@ -1100,6 +1437,7 @@ class KompasPart:
         sketch_ent,
         depth: float = 100.0,
         direction: int = DT_NORMAL,
+        draft_angle: float = 0.0,
         expr: str = None,
         through_all: bool = False,
     ):
@@ -1115,13 +1453,16 @@ class KompasPart:
         defn = _wrap(K5.ksCutExtrusionDefinition, ent.GetDefinition())
         defn.directionType = direction
         depth_type = 1 if through_all else 0
-        # Для DT_REVERSE нужно задавать параметры обратной стороны (side=False)
         if direction == DT_REVERSE:
-            defn.SetSideParam(False, depth_type, float(depth), 0.0, False)
+            defn.SetSideParam(
+                False, depth_type, float(depth), float(draft_angle), False
+            )
         else:
-            defn.SetSideParam(True, depth_type, float(depth), 0.0, False)
+            defn.SetSideParam(True, depth_type, float(depth), float(draft_angle), False)
         if direction in (DT_BOTH, DT_MIDDLE):
-            defn.SetSideParam(False, depth_type, float(depth), 0.0, False)
+            defn.SetSideParam(
+                False, depth_type, float(depth), float(draft_angle), False
+            )
         defn.SetSketch(_ole(sketch_ent))
         if not ent.Create():
             log.error(f"[FAIL CUT] Операция вырезания '{ent.name}' не построилась!")
@@ -1153,23 +1494,27 @@ class KompasPart:
             )
         return ent
 
-    def revolve(self, sketch_ent, angle: float = 360.0, cut: bool = False):
+    def revolve(
+        self,
+        sketch_ent,
+        angle: float = 360.0,
+        cut: bool = False,
+        angle_expr: str = None,
+    ):
         """Операция вращения (o3d_baseRotated = 27) или выреза вращением (o3d_cutRotated = 29)."""
         vol_before = self.volume()
+        vars_before = set(self._get_all_feature_var_names())
+
         obj_type = OBJ_CUT_ROTATE if cut else OBJ_BASE_ROTATE
         ent = _wrap(K5.ksEntity, self.part.NewEntity(obj_type))
         if cut:
             defn = _wrap(K5.ksCutRotatedDefinition, ent.GetDefinition())
         else:
             defn = _wrap(K5.ksBaseRotatedDefinition, ent.GetDefinition())
-        # Для выреза вращением направление должно быть обратным (DT_REVERSE),
-        # чтобы контур определял удаляемый материал, а не оставляемый
+
         defn.directionType = DT_REVERSE if cut else DT_NORMAL
-        # ksBaseRotatedDefinition.SetSideParam(side, angle) — 2 параметра (как у cut)
-        # ksCutRotatedDefinition.SetSideParam(side, angle) — 2 параметра
         dyn_defn = dynamic.DumbDispatch(defn._oleobj_)
         dyn_defn.SetSideParam(True, float(angle))
-        # Назначаем эскиз — передаем саму сущность эскиза (ksEntity)
         dyn_defn.SetSketch(_ole(sketch_ent))
         if not ent.Create():
             log.error(f"[FAIL REVOLVE] Операция вращения '{ent.name}' не построилась!")
@@ -1179,6 +1524,14 @@ class KompasPart:
                 "Убедись, что в эскизе есть осевая линия b.axis() и замкнутый контур лежит строго по одну сторону от оси."
             )
         self.part.Update()
+
+        if angle_expr:
+            self._bind_new_vars_to_expressions(
+                vars_before, [(float(angle), angle_expr)], context=ent.name
+            )
+            self.part.RebuildModel()
+            self.part.Update()
+
         vol_after = self.volume()
         log.info(
             f"[REVOLVE OK] '{ent.name}' (cut={cut}, angle={angle}): "
@@ -1193,50 +1546,42 @@ class KompasPart:
         return ent
 
     def _set_circular_axis(self, defn, axis_ent):
-        """Безопасно устанавливает ось кругового массива.
-
-        Принимает либо готовую осевую сущность (o3d_axis2Planes=9, o3d_axisConeFace=11),
-        либо цилиндрическую грань (o3d_face=6) — в последнем случае создает ось по ней.
-        """
-        # Если передана грань (type=6), создаем из неё ось
-        if hasattr(axis_ent, 'type') and axis_ent.type == OBJ_FACE:
+        """Устанавливает ось кругового массива (ось или цилиндрическая грань)."""
+        if hasattr(axis_ent, "type") and axis_ent.type == OBJ_FACE:
             fdef = _wrap(K5.ksFaceDefinition, axis_ent.GetDefinition())
             if fdef and fdef.IsCylinder():
                 axis_ent = self.create_axis_from_cylindrical_face(axis_ent)
-                log.debug(f"  [PATTERN AXIS] Создана ось из цилиндрической грани: {axis_ent.name}")
 
-        ole_defn = _ole(defn)
         ole_axis = _ole(axis_ent)
-        # Способ 1: штатный SetAxis с распакованным _ole(axis_ent)
         try:
             defn.SetAxis(ole_axis)
-            log.debug("  [PATTERN AXIS] defn.SetAxis(_ole(axis_ent)) выполнен успешно")
             return
-        except Exception as e0:
-            log.debug(f"  [PATTERN AXIS] defn.SetAxis(_ole) вернул: {e0}")
-
-        # Способ 2: через динамический IDispatch
-        try:
-            dyn_defn = dynamic.DumbDispatch(ole_defn)
+        except Exception:
+            dyn_defn = dynamic.DumbDispatch(_ole(defn))
             dyn_defn.SetAxis(ole_axis)
-            log.debug("  [PATTERN AXIS] SetAxis выполнен через dynamic.DumbDispatch")
-            return
-        except Exception as e1:
-            log.debug(f"  [PATTERN AXIS] dynamic.DumbDispatch.SetAxis вернул: {e1}")
 
-        # Способ 3: перебор DISPID в vtable ksCircularCopyDefinition
-        for dispid in range(1, 20):
+    def _get_circular_op_array(self, cc_def, defn_raw):
+        """Извлекает коллекцию операций из ksCircularCopyDefinition."""
+        for attr in ("GetOperationArray", "OperationArray"):
             try:
-                res = ole_defn.InvokeTypes(dispid, 0, 1, (11, 0), ((9, 0),), ole_axis)
-                log.debug(
-                    f"  [PATTERN AXIS] SetAxis выполнен через InvokeTypes(dispid={dispid}) -> res={res}"
-                )
-                return
+                member = getattr(cc_def, attr)
+                res = member() if callable(member) else member
+                if res is not None:
+                    return res
             except Exception:
-                continue
+                pass
 
+        dyn_defn = dynamic.DumbDispatch(defn_raw)
+        for attr in ("GetOperationArray", "OperationArray"):
+            try:
+                member = getattr(dyn_defn, attr)
+                res = member() if callable(member) else member
+                if res is not None:
+                    return res
+            except Exception:
+                pass
         raise RuntimeError(
-            "[FAIL PATTERN AXIS] Не удалось вызвать SetAxis на ksCircularCopyDefinition!"
+            "[FAIL PATTERN] Не удалось получить массив операций из ksCircularCopyDefinition"
         )
 
     def circular_pattern(
@@ -1244,103 +1589,43 @@ class KompasPart:
     ):
         """Массив по концентрической сетке (o3d_circularCopy = 36)."""
         vol_before = self.volume()
-        try:
-            ent = _wrap(K5.ksEntity, self.part.NewEntity(OBJ_CIRCULAR_COPY))
-            # Получаем определение как raw COM object
-            defn_raw = ent.GetDefinition()
-            ole_defn = defn_raw._oleobj_ if hasattr(defn_raw, '_oleobj_') else defn_raw
-            log.info(f"  [PATTERN] Definition raw object: {type(ole_defn)}")
+        ent = _wrap(K5.ksEntity, self.part.NewEntity(OBJ_CIRCULAR_COPY))
+        defn_raw = ent.GetDefinition()
+        cc_def = _wrap(K5.ksCircularCopyDefinition, defn_raw)
 
-            # Пытаемся получить массив операций через перебор DISPID
-            op_array = None
-            for dispid in range(0, 50):
-                try:
-                    # Пробуем как метод (INVOKE_FUNC = 1)
-                    result = ole_defn.InvokeTypes(dispid, 0, 1, (9, 0), ())
-                    if result is not None and hasattr(result, '_oleobj_'):
-                        log.info(f"  [PATTERN] DISPID {dispid} как метод вернул COM object: {type(result)}")
-                        op_array = result
-                        break
-                except Exception:
-                    pass
-                try:
-                    # Пробуем как свойство (PROPGET = 2)
-                    result = ole_defn.InvokeTypes(dispid, 0, 2, (9, 0), ())
-                    if result is not None and hasattr(result, '_oleobj_'):
-                        log.info(f"  [PATTERN] DISPID {dispid} как свойство вернул COM object: {type(result)}")
-                        op_array = result
-                        break
-                except Exception:
-                    pass
+        op_array = self._get_circular_op_array(cc_def, defn_raw)
+        cc_def.count1 = 1
+        cc_def.step1 = 10.0
+        cc_def.count2 = int(count)
+        cc_def.step2 = float(angle)
+        cc_def.factor2 = True
+        cc_def.geomArray = False
 
-            if op_array is None:
-                # Fallback: пробуем dynamic dispatch
-                dyn_defn = dynamic.DumbDispatch(defn_raw)
-                try:
-                    op_array = dyn_defn.OperationArray
-                    if op_array is not None and hasattr(op_array, '_oleobj_'):
-                        log.info("  [PATTERN] Получен OperationArray через dynamic dispatch .OperationArray")
-                except Exception:
-                    pass
-                if op_array is None:
-                    try:
-                        op_array = dyn_defn.GetOperationArray
-                        if op_array is not None and hasattr(op_array, '_oleobj_'):
-                            log.info("  [PATTERN] Получен OperationArray через dynamic dispatch .GetOperationArray")
-                    except Exception:
-                        pass
+        flist = _wrap(K5.ksEntityCollection, op_array)
+        flist.Clear()
+        for f in features:
+            flist.Add(_ole(f))
 
-            if op_array is None or not hasattr(op_array, '_oleobj_'):
-                log.error("  [PATTERN] Не удалось получить OperationArray ни одним способом")
-                raise RuntimeError("[FAIL PATTERN] Не удалось получить массив операций для кругового массива")
-
-            log.info(f"  [PATTERN] Получен OperationArray: {type(op_array)}")
-
-            # Устанавливаем параметры массива через типизированную обёртку ksCircularCopyDefinition
-            # (надёжнее, чем ручной перебор DISPID): count2 = число копий по окружности, step2 = полный угол.
-            try:
-                cc_def = _wrap(K5.ksCircularCopyDefinition, defn_raw)
-                cc_def.count1 = 1
-                cc_def.step1 = 10.0
-                cc_def.count2 = int(count)
-                cc_def.step2 = float(angle)
-                cc_def.factor2 = True
-                cc_def.geomArray = False
-                log.info(f"  [PATTERN] Параметры массива установлены через ksCircularCopyDefinition: count2={int(count)}, step2={angle}°")
-            except Exception as e:
-                log.warning(f"  [PATTERN] Установка параметров через ksCircularCopyDefinition не удалась: {e}")
-
-            flist = _wrap(K5.ksEntityCollection, op_array)
-            flist.Clear()
-            for f in features:
-                flist.Add(_ole(f))
-
-            # Устанавливаем ось через определение (передаем raw definition)
-            self._set_circular_axis(defn_raw, axis_ent)
+        self._set_circular_axis(cc_def, axis_ent)
+        created = ent.Create()
+        if not created:
+            log.warning(
+                "[PATTERN] ent.Create() вернул False, пробуем ось пересечения XY x YZ..."
+            )
+            axis_fallback = self.create_axis_by_2_planes("xy", "yz")
+            self._set_circular_axis(cc_def, axis_fallback)
             created = ent.Create()
 
-            if not created:
-                log.warning(
-                    "[PATTERN] ent.Create() с переданной гранью вернул False, пробуем ось пересечения XY x YZ..."
-                )
-                axis_fallback = self.create_axis_by_2_planes("xy", "yz")
-                self._set_circular_axis(defn_raw, axis_fallback)
-                created = ent.Create()
-
-            if not created:
-                log.error(
-                    f"[FAIL PATTERN] Массив по концентрической сетке '{ent.name}' не построился!"
-                )
-                self.close()
-                raise RuntimeError(
-                    "[FAIL PATTERN] Массив по концентрической сетке не построился!"
-                )
-            self.part.Update()
-        except Exception as e:
-            log.error(f"[FAIL PATTERN EXCEPTION] {e}\n{traceback.format_exc()}")
+        if not created:
+            log.error(
+                f"[FAIL PATTERN] Массив по концентрической сетке '{ent.name}' не построился!"
+            )
             self.close()
-            raise
+            raise RuntimeError(
+                "[FAIL PATTERN] Массив по концентрической сетке не построился!"
+            )
 
+        self.part.Update()
         vol_after = self.volume()
         log.info(
             f"[PATTERN OK] '{ent.name}': count={count}, angle={angle}°, "
@@ -1348,23 +1633,22 @@ class KompasPart:
         )
         return ent
 
-    # ===================== SHEET METAL (ЛИСТОВЫЙ МЕТАЛЛ — API7 ISheetMetalContainer) =====================
+    # ===================== ЛИСТОВОЙ МЕТАЛЛ (API7 ISheetMetalContainer) =====================
 
     def _to_model_object7(self, ent_or_def):
-        """Конвертирует объект API5 (ksEntity, ksEdgeDefinition, ksFaceDefinition) в API7 IModelObject."""
+        """Конвертирует объект API5 (ksEntity, ksEdgeDefinition, ksFaceDefinition) или API7 в IModelObject."""
         if isinstance(ent_or_def, K7.IModelObject):
             return ent_or_def
         raw = _ole(ent_or_def)
-        # Если передан ksEdgeDefinition или ksFaceDefinition, извлекаем родительский ksEntity через GetEntity()
-        try:
+        if hasattr(ent_or_def, "GetEntity"):
             ent5 = ent_or_def.GetEntity()
             if ent5 is not None:
                 raw = _ole(ent5)
-        except Exception:
-            pass
         mo_disp = self.api5.TransferInterface(raw, 2, 0)
         if mo_disp is None:
-            raise RuntimeError("[FAIL TRANSFER] Не удалось перевести объект API5 в API7 IModelObject!")
+            raise RuntimeError(
+                "[FAIL TRANSFER] Не удалось перевести объект API5 в API7 IModelObject!"
+            )
         return _wrap(K7.IModelObject, mo_disp)
 
     def create_sheet_metal_body(
@@ -1398,7 +1682,7 @@ class KompasPart:
         sm_body.Thickness = float(thickness)
         sm_body.Radius = float(bend_radius)
         sm_body.BendCoefficient = float(k_factor)
-        sm_body.ThicknessDirection = int(thickness_direction)
+        sm_body.ThicknessDirection = bool(thickness_direction)
         sm_body.Direction = int(direction)
         sm_body.UnfoldType = int(unfold_type)
         sm_body.Straighten = False
@@ -1418,7 +1702,9 @@ class KompasPart:
         if k_factor_expr:
             pending.append((float(k_factor), k_factor_expr))
         if pending:
-            self._bind_new_vars_to_expressions(vars_before, pending, context=sm_body.Name)
+            self._bind_new_vars_to_expressions(
+                vars_before, pending, context=sm_body.Name
+            )
             self.part.RebuildModel()
             self.part.Update()
 
@@ -1442,10 +1728,16 @@ class KompasPart:
         offset_type: int = 3,
         side_type: int = 0,
         bend_release: int = 0,
+        internal_radius: bool = False,
+        width: float = None,
+        distance_left: float = None,
+        distance_right: float = None,
+        offset: float = 0.0,
         length_expr: str = None,
         radius_expr: str = None,
         angle_expr: str = None,
         k_factor_expr: str = None,
+        width_expr: str = None,
     ):
         """Добавляет нативный сгиб (Сгиб:N) к ребру листового тела через API7 ISheetMetalBends."""
         vol_before = self.volume()
@@ -1462,14 +1754,22 @@ class KompasPart:
         bend.Disposal = int(disposal)
         bend.Angle = float(angle)
         bend.Radius = float(bend_radius)
+        bend.InternalRadius = bool(internal_radius)
         bend.BendCoefficient = float(k_factor)
         bend.LengthType = int(length_type)
         bend.LengthType1 = int(length_type)
         bend.Length = float(length)
         bend.Length1 = float(length)
         bend.OffsetType = int(offset_type)
+        bend.Offset = float(offset)
         bend.LeftSideType = int(side_type)
         bend.RightSideType = int(side_type)
+        if width is not None:
+            bend.Width = float(width)
+        if distance_left is not None:
+            bend.DistanceLeftSide = float(distance_left)
+        if distance_right is not None:
+            bend.DistanceRightSide = float(distance_right)
         bend.BendRelease = int(bend_release)
         bend.Straighten = False
 
@@ -1489,6 +1789,8 @@ class KompasPart:
             pending.append((float(angle), angle_expr))
         if k_factor_expr:
             pending.append((float(k_factor), k_factor_expr))
+        if width_expr and width is not None:
+            pending.append((float(width), width_expr))
         if pending:
             self._bind_new_vars_to_expressions(vars_before, pending, context=bend.Name)
             self.part.RebuildModel()
@@ -1501,102 +1803,115 @@ class KompasPart:
         )
         return bend
 
-    def close_corners(
+    def add_line_bend(
         self,
-        edge1,
-        edge2,
-        definition_type: bool = False,
-        closure: int = 0,
-        edge_closure: int = 0,
-        slot_value: float = 0.0,
-        overlap_factor: float = 0.0,
-        bend_transition: int = 0,
-        include_slot_height: bool = False,
+        bend_object,
+        bend_radius: float = 1.0,
+        angle: float = 90.0,
+        k_factor: float = 0.4,
+        direction: bool = True,
+        bend_left_fixed: bool = False,
+        internal_radius: bool = True,
+        radius_expr: str = None,
+        angle_expr: str = None,
+        k_factor_expr: str = None,
     ):
-        """Создает нативное 'Замыкание углов' (ISheetMetalJointBend) через API7."""
+        """Добавляет нативный 'Сгиб по линии' (ISheetMetalLineBend) через API7 ISheetMetalLineBends."""
         vol_before = self.volume()
+        vars_before = set(self._get_all_feature_var_names())
+
         part7 = self._get_part7()
+        smc = _wrap(K7.ISheetMetalContainer, part7)
+        bodies = _wrap(K7.ISheetMetalBodies, smc.SheetMetalBodies)
+        if bodies.Count > 0:
+            sm_body = _wrap(K7.ISheetMetalBody, bodies.Item(0))
+            if sm_body.Straighten:
+                sm_body.Straighten = False
+                self.part.Update()
 
-        # Пробуем получить SheetMetalJointBends через ISheetMetalContainer1
-        # Используем QueryInterface с правильным IID
-        jbs = None
+        line_bends = _wrap(K7.ISheetMetalLineBends, smc.SheetMetalLineBends)
+        lb = _wrap(K7.ISheetMetalLineBend, line_bends.Add())
 
-        # Список известных IID для ISheetMetalContainer1 в разных версиях KOMPAS
-        iids_to_try = [
-            "{9FA4CEEC-A8EE-4BF5-BE1B-EC3DF82E96AD}",  # Основной вариант
-            "{D4A5F7E8-3C2B-4E8F-9A1D-5B6C7E8F9A0B}",  # Вариант для v16+
-            "{E1F2D3C4-B5A6-9D8E-7F0A-1B2C3D4E5F6A}",  # Еще вариант
-        ]
+        if hasattr(bend_object, "X1") and hasattr(bend_object, "Y1"):
+            mo_disp = self.api5.TransferInterface(_ole(bend_object), 2, 0)
+            if mo_disp is None:
+                raise RuntimeError(
+                    "[FAIL LINE BEND] TransferInterface(ILineSegment) вернул None!"
+                )
+            mo_line = _wrap(K7.IModelObject, mo_disp)
+        else:
+            mo_line = self._to_model_object7(bend_object)
 
-        for iid_str in iids_to_try:
-            try:
-                iid_smc1 = pythoncom.MakeIID(iid_str)
-                smc1_disp = part7._oleobj_.QueryInterface(iid_smc1, pythoncom.IID_IDispatch)
-                smc1 = dynamic.DumbDispatch(smc1_disp)
-                # Проверяем, есть ли свойство SheetMetalJointBends
-                try:
-                    jbs_raw = smc1.SheetMetalJointBends
-                    if jbs_raw is not None:
-                        jbs = dynamic.DumbDispatch(jbs_raw)
-                        log.info(f"[CLOSE CORNERS] Получен JointBends через ISheetMetalContainer1 (IID={iid_str})")
-                        break
-                except AttributeError:
-                    # Свойства нет, пробуем следующий IID
-                    continue
-            except Exception as e:
-                log.debug(f"[CLOSE CORNERS] IID {iid_str} не сработал: {e}")
-                continue
+        lb.Line = _ole(mo_line)
+        lb.Direction = bool(direction)
+        lb.Radius = float(bend_radius)
+        lb.InternalRadius = bool(internal_radius)
+        lb.Angle = float(angle)
+        lb.BendCoefficient = float(k_factor)
+        lb.BendLeftSideFixed = bool(bend_left_fixed)
+        lb.Straighten = False
 
-        if jbs is None:
-            # Последняя попытка: попробуем через Feature Tree
-            # В дереве модели это может быть отдельная фича
-            log.warning("[CLOSE CORNERS] Не удалось получить через ISheetMetalContainer1, пробуем через Feature Tree...")
-            try:
-                # Попробуем создать через NewEntity в API5
-                # o3d_sheetMetalClosedCorner = 539
-                from kompas_core import OBJ_CORNER_RELIEF
-                ent = _wrap(K5.ksEntity, self.part.NewEntity(OBJ_CORNER_RELIEF))
-                defn = _wrap(K5.ksCornerReliefDefinition, ent.GetDefinition())
-                # Настроим определение
-                # Но это API5, а в блупринте это API7 операция
-                log.warning("[CLOSE CORNERS] API5 вариант не реализован полностью")
-            except Exception as e:
-                log.debug(f"[CLOSE CORNERS] API5 попытка не удалась: {e}")
-
-        if jbs is None:
-            log.warning("[CLOSE CORNERS] Пропускаем операцию замыкания углов (недоступна в API)")
-            log.warning("[CLOSE CORNERS] Геометрия может отличаться от эталона!")
-            # Не падаем, а просто пропускаем - продолжаем построение
-            self.part.Update()
-            vol_after = self.volume()
-            log.info(f"[CLOSE CORNERS SKIPPED] V_before={vol_before:.2f} -> V_after={vol_after:.2f}")
-            return None
-
-        jb = dynamic.DumbDispatch(jbs.Add())
-
-        mo1 = self._to_model_object7(edge1)
-        mo2 = self._to_model_object7(edge2)
-        jb.DefinitionType = bool(definition_type)
-        jb.Bend1 = _ole(mo1)
-        jb.Bend2 = _ole(mo2)
-        jb.Closure = int(closure)
-        jb.EdgeClosure = int(edge_closure)
-        jb.SlotValue = float(slot_value)
-        jb.OverlapFactor = float(overlap_factor)
-        jb.BendTransition = int(bend_transition)
-        jb.IncludeSlotHeight = bool(include_slot_height)
-
-        if not jb.Update():
-            log.error("[FAIL CLOSE CORNERS] Замыкание углов не построилось!")
+        if not lb.Update():
+            log.error(f"[FAIL LINE BEND] Сгиб по линии '{lb.Name}' не построился!")
             self.close()
-            raise RuntimeError("[FAIL CLOSE CORNERS] Замыкание углов не построилось!")
+            raise RuntimeError("[FAIL LINE BEND] Сгиб по линии не построился!")
 
         self.part.Update()
+
+        pending = []
+        if radius_expr:
+            pending.append((float(bend_radius), radius_expr))
+        if angle_expr:
+            pending.append((float(angle), angle_expr))
+        if k_factor_expr:
+            pending.append((float(k_factor), k_factor_expr))
+        if pending:
+            self._bind_new_vars_to_expressions(vars_before, pending, context=lb.Name)
+            self.part.RebuildModel()
+            self.part.Update()
+
         vol_after = self.volume()
         log.info(
-            f"[CLOSE CORNERS OK] '{jb.Name}': V_before={vol_before:.2f} -> V_after={vol_after:.2f} (ΔV={vol_after - vol_before:.2f} мм³)"
+            f"[LINE BEND OK] '{lb.Name}': R={bend_radius}, Angle={angle}°, "
+            f"V_before={vol_before:.2f} -> V_after={vol_after:.2f} (ΔV={vol_after - vol_before:.2f} мм³)"
         )
-        return jb
+        return lb
+
+    def get_sketch_line_segments(self, sketch_ent):
+        """Возвращает список ILineSegment из эскиза (для Сгиб по линии)."""
+        sk_feat7 = self._find_sketch_feature7(sketch_ent)
+        if sk_feat7 is None:
+            log.warning(
+                f"[GET SEGMENTS] Не найден IFeature7 для эскиза {sketch_ent.name}"
+            )
+            return []
+
+        sk7 = _wrap(K7.ISketch, sk_feat7)
+        doc2d_7 = _wrap(K7.IKompasDocument2D, sk7.BeginEdit())
+        try:
+            v_mgr = _wrap(K7.IViewsAndLayersManager, doc2d_7.ViewsAndLayersManager)
+            views = _wrap(K7.IViews, v_mgr.Views)
+            v0 = _wrap(K7.IView, views.ActiveView)
+            dc = _wrap(K7.IDrawingContainer, v0)
+            lsegs = _wrap(K7.ILineSegments, dc.LineSegments)
+            segments = [
+                _wrap(K7.ILineSegment, lsegs.LineSegment(i)) for i in range(lsegs.Count)
+            ]
+            log.info(
+                f"[GET SEGMENTS] Найдено {len(segments)} линий в эскизе {sketch_ent.name}"
+            )
+            return segments
+        finally:
+            sk7.EndEdit()
+
+    def close_corners(self, *args, **kwargs):
+        """Заглушка совместимости: в КОМПАС-3D V16 o3d_sheetMetalClosedCorner (539)
+        не экспортируется в COM API5/API7 (GetDefinition() == None).
+        """
+        log.warning(
+            "[CLOSE CORNERS] В КОМПАС-3D V16 операция 'Замыкание углов' не имеет COM-интерфейса (Def=None). "
+            "Операция пропущена — для замыкания стыка используйте параметры ширины/расширения сгибов."
+        )
 
     def sheet_metal_cut(
         self,
@@ -1627,9 +1942,13 @@ class KompasPart:
         sm_cut.Cut = bool(cut)
 
         if not sm_cut.Update():
-            log.error(f"[FAIL SHEET METAL CUT] Вырез в листовом теле '{sm_cut.Name}' не построился!")
+            log.error(
+                f"[FAIL SHEET METAL CUT] Вырез в листовом теле '{sm_cut.Name}' не построился!"
+            )
             self.close()
-            raise RuntimeError("[FAIL SHEET METAL CUT] Вырез в листовом теле не построился!")
+            raise RuntimeError(
+                "[FAIL SHEET METAL CUT] Вырез в листовом теле не построился!"
+            )
 
         self.part.Update()
 
@@ -1655,7 +1974,7 @@ class KompasPart:
         ent = _wrap(K5.ksEntity, self.part.NewEntity(OBJ_FILLET))
         defn = _wrap(K5.ksFilletDefinition, ent.GetDefinition())
         defn.radius = float(radius)
-        defn.tangent = True  # распространять по касательным
+        defn.tangent = True
 
         edge_collection = _wrap(K5.ksEntityCollection, defn.array())
         for edge in edges:
@@ -1681,17 +2000,15 @@ class KompasPart:
         )
         return ent
 
-    def chamfer(self, edges: list, distance: float, angle: float = 45.0, expr: str = None):
-        """Фаска ребер (o3d_chamfer = 33). distance — длина фаски, angle — угол (обычно 45°).
-        В API5 фаска задается двумя расстояниями distance1, distance2 и флагом transfer.
-        Для симметричной фаски 45°: distance1 = distance2 = distance, transfer = False.
-        """
+    def chamfer(
+        self, edges: list, distance: float, angle: float = 45.0, expr: str = None
+    ):
+        """Фаска ребер (o3d_chamfer = 33)."""
         vol_before = self.volume()
         vars_before = set(self._get_all_feature_var_names())
 
         ent = _wrap(K5.ksEntity, self.part.NewEntity(OBJ_CHAMFER))
         defn = _wrap(K5.ksChamferDefinition, ent.GetDefinition())
-        # Для симметричной фаски 45°: distance1 = distance2 = distance, transfer = False
         defn.SetChamferParam(False, float(distance), float(distance))
         defn.tangent = True
 
@@ -1719,240 +2036,103 @@ class KompasPart:
         )
         return ent
 
-    def create_connection_surface(self, edges, tension1: float = 50.0, tension2: float = 50.0):
-        """Поверхность соединения (Lofted Surface, o3d_LoftSurface) по ребрам.
-        edges — список ребер (сечений), по которым строится поверхность соединения зазора."""
-        vol_before = self.volume()
-
-        ent = _wrap(K5.ksEntity, self.part.NewEntity(OBJ_LOFT_SURFACE))
-        defn = _wrap(K5.ksLoftSurfaceDefinition, ent.GetDefinition())
-        # Добавление сечений (ребер) через array()
-        dyn_defn = dynamic.DumbDispatch(defn._oleobj_)
-        arr = dyn_defn.array()
-        for edge in edges:
-            arr.Add(_ole(edge))
-        dyn_defn.Tension1 = tension1
-        dyn_defn.Tension2 = tension2
-
-        if not ent.Create():
-            log.error(f"[FAIL CONNECTION SURFACE] Поверхность соединения не построилась!")
-            self.close()
-            raise RuntimeError("[FAIL CONNECTION SURFACE] Поверхность соединения не построилась!")
-        self.part.Update()
-        log.info(f"[CONNECTION SURFACE OK] '{ent.name}' создана")
-        return ent
-
-    def create_ruled_surface(self, edges, tension1: float = 50.0, tension2: float = 50.0):
-        """Линейчатая поверхность (Ruled Surface) по ребрам (o3d_RuledSurface = 515)."""
-        vol_before = self.volume()
-        ent = _wrap(K5.ksEntity, self.part.NewEntity(OBJ_RULED_SURFACE))
-        defn = _wrap(K5.ksRuledSurfaceDefinition, ent.GetDefinition())
-        dyn_defn = dynamic.DumbDispatch(defn._oleobj_)
-        arr = dyn_defn.array()
-        for edge in edges:
-            arr.Add(_ole(edge))
-        dyn_defn.Tension1 = tension1
-        dyn_defn.Tension2 = tension2
-
-        if not ent.Create():
-            log.error(f"[FAIL RULED SURFACE] Линейчатая поверхность не построилась!")
-            self.close()
-            raise RuntimeError("[FAIL RULED SURFACE] Линейчатая поверхность не построилась!")
-        self.part.Update()
-        log.info(f"[RULED SURFACE OK] '{ent.name}' создана")
-        return ent
-
-    def sew_surfaces(self, surfaces, tolerance: float = 0.01):
-        """Сшивка поверхностей (Surface Sew) (o3d_SurfaceSewer = 96).
-        surfaces — список поверхностей (faces/surfaces) для сшивки.
-        tolerance — точность сшивки."""
-        vol_before = self.volume()
-        ent = _wrap(K5.ksEntity, self.part.NewEntity(OBJ_SURFACE_SEW))
-        defn = _wrap(K5.ksSurfaceSewerDefinition, ent.GetDefinition())
-        dyn_defn = dynamic.DumbDispatch(defn._oleobj_)
-        arr = dyn_defn.array()
-        for surf in surfaces:
-            arr.Add(_ole(surf))
-        dyn_defn.Tolerance = tolerance
-
-        if not ent.Create():
-            log.error(f"[FAIL SURFACE SEW] Сшивка поверхностей не построилась!")
-            self.close()
-            raise RuntimeError("[FAIL SURFACE SEW] Сшивка поверхностей не построилась!")
-        self.part.Update()
-        log.info(f"[SURFACE SEW OK] Сшивка '{ent.name}' создана")
-        return ent
-
-    def point_pattern(self, features: list, points: list):
-        """Массив по точкам (o3d_PointDrivenPattern = 507).
-        points — список 2D-точек эскиза (IPoint) или 3D-точек/вершин.
-        Работает через API5 определение (получаемое через InvokeTypes на сырой сущности).
+    def point_pattern(
+        self,
+        features: list,
+        driven_obj,
+        base_point=None,
+        projection: bool = True,
+        deleted_indexes: list[int] = None,
+    ):
+        """Массив по точкам (o3d_PointDrivenPattern = 507) через API7 IPointDrivenPattern.
+        driven_obj: эскиз с 2D-точками (ksEntity) либо список пространственных/управляющих объектов.
         """
         vol_before = self.volume()
+        if not self.api7:
+            raise RuntimeError("[FAIL POINT PATTERN] API7 недоступен!")
 
-        try:
-            # 1. Создаём СЫРУЮ сущность через API5 части (как в рабочем тесте: part.part.NewEntity)
-            raw_ent = self.part.NewEntity(OBJ_POINT_PATTERN)
-            ole_ent = _ole(raw_ent)  # получаем сырой COM
+        raw_ent = self.part.NewEntity(OBJ_POINT_PATTERN)
+        if raw_ent is None:
+            raise RuntimeError("[FAIL POINT PATTERN] NewEntity(507) вернул None!")
 
-            # 2. Получаем определение через InvokeTypes на сырой сущности (DISPID 6 — Definition)
-            defn_raw = None
-            for dispid in (6, 11):
-                try:
-                    result = ole_ent.InvokeTypes(dispid, 0, 2, (9, 0), ())  # PROPGET
-                    if result is not None and hasattr(result, '_oleobj_'):
-                        defn_raw = result
-                        log.info(f"  [POINT PATTERN] Получено определение через DISPID {dispid}: {type(defn_raw)}")
-                        break
-                except Exception as e:
-                    log.debug(f"  [POINT PATTERN] DISPID {dispid} error: {e}")
-                    pass
+        mo_disp = self.api5.TransferInterface(_ole(raw_ent), 2, 0)
+        if mo_disp is None:
+            raise RuntimeError("[FAIL POINT PATTERN] TransferInterface вернул None!")
+        pt_pattern = _wrap(K7.IPointDrivenPattern, mo_disp)
 
-            if defn_raw is None:
-                log.error("  [POINT PATTERN] Не удалось получить определение через InvokeTypes!")
-                raise RuntimeError("[FAIL POINT PATTERN] Не удалось получить определение массива по точкам!")
+        # 1. Исходные операции (вырезы, фаски, сгибы и т.д.)
+        pt_pattern.Clear()
+        mo_objs = [_ole(self._to_model_object7(f)) for f in features]
+        pt_pattern.AddInitialObjects(
+            VARIANT(pythoncom.VT_ARRAY | pythoncom.VT_DISPATCH, mo_objs)
+        )
 
-            ole_defn = defn_raw._oleobj_ if hasattr(defn_raw, '_oleobj_') else defn_raw
-            log.info(f"  [POINT PATTERN] Definition raw object: {type(ole_defn)}")
+        # 2. Управляющие объекты (эскиз с 2D-точками или 3D-точки)
+        pt_pattern.ClearDrivenObjects()
+        drv_items = (
+            driven_obj if isinstance(driven_obj, (list, tuple)) else [driven_obj]
+        )
+        drv_ole_list = []
+        for item in drv_items:
+            sf7 = self._find_sketch_feature7(item) if hasattr(item, "name") else None
+            mo = sf7 if sf7 is not None else self._to_model_object7(item)
+            if not pt_pattern.IsSuitableDrivenObject(_ole(mo)):
+                log.warning(
+                    f"[POINT PATTERN] Объект '{getattr(mo, 'Name', item)}' не отмечен как подходящий в IsSuitableDrivenObject"
+                )
+            drv_ole_list.append(_ole(mo))
 
-            # 3. Получаем массив исходных объектов (InitialObjects) через DISPID
-            op_array = None
-            for dispid in range(0, 50):
-                try:
-                    result = ole_defn.InvokeTypes(dispid, 0, 1, (9, 0), ())
-                    if result is not None and hasattr(result, '_oleobj_'):
-                        log.info(f"  [POINT PATTERN] DISPID {dispid} как метод вернул COM object: {type(result)}")
-                        op_array = result
-                        break
-                except Exception:
-                    pass
-                try:
-                    result = ole_defn.InvokeTypes(dispid, 0, 2, (9, 0), ())
-                    if result is not None and hasattr(result, '_oleobj_'):
-                        log.info(f"  [POINT PATTERN] DISPID {dispid} как свойство вернул COM object: {type(result)}")
-                        op_array = result
-                        break
-                except Exception:
-                    pass
+        pt_pattern.DrivenObjects = VARIANT(
+            pythoncom.VT_ARRAY | pythoncom.VT_DISPATCH, drv_ole_list
+        )
+        pt_pattern.BasePointType = 1 if base_point is not None else 0
+        if base_point is not None:
+            pt_pattern.BasePoint = _ole(self._to_model_object7(base_point))
+        pt_pattern.ProjectionPoints = bool(projection)
+        pt_pattern.GeometryPattern = False
+        if deleted_indexes is not None:
+            pt_pattern.InstanceDeletedIndexes = VARIANT(
+                pythoncom.VT_ARRAY | pythoncom.VT_I4, [int(i) for i in deleted_indexes]
+            )
 
-            if op_array is None:
-                dyn_defn = dynamic.DumbDispatch(defn_raw)
-                try:
-                    op_array = dyn_defn.InitialObjects
-                    if op_array is not None and hasattr(op_array, '_oleobj_'):
-                        log.info("  [POINT PATTERN] Получен InitialObjects через dynamic dispatch .InitialObjects")
-                except Exception:
-                    pass
-                if op_array is None:
-                    try:
-                        op_array = dyn_defn.GetInitialObjects
-                        if op_array is not None and hasattr(op_array, '_oleobj_'):
-                            log.info("  [POINT PATTERN] Получен InitialObjects через dynamic dispatch .GetInitialObjects")
-                    except Exception:
-                        pass
-
-            if op_array is None or not hasattr(op_array, '_oleobj_'):
-                log.error("  [POINT PATTERN] Не удалось получить InitialObjects ни одним способом")
-                raise RuntimeError("[FAIL POINT PATTERN] Не удалось получить массив исходных объектов для массива по точкам")
-
-            log.info(f"  [POINT PATTERN] Получен InitialObjects: {type(op_array)}")
-
-            flist = _wrap(K5.ksEntityCollection, op_array)
-            flist.Clear()
-            for f in features:
-                flist.Add(_ole(f))
-
-            # 4. Получаем коллекцию DrivenObjects (управляющие объекты/точки) — DISPID 101
-            driven_objects = None
-            dyn_defn = dynamic.DumbDispatch(defn_raw)
-            try:
-                driven_objects = dyn_defn.DrivenObjects
-                if driven_objects is not None and hasattr(driven_objects, '_oleobj_'):
-                    log.info("  [POINT PATTERN] Получен DrivenObjects через dynamic dispatch .DrivenObjects")
-            except Exception:
-                pass
-
-            if driven_objects is None:
-                try:
-                    result = ole_defn.InvokeTypes(101, 0, 2, (9, 0), ())  # PROPGET
-                    if result is not None and hasattr(result, '_oleobj_'):
-                        driven_objects = result
-                        log.info("  [POINT PATTERN] Получен DrivenObjects через InvokeTypes(101)")
-                except Exception:
-                    pass
-
-            if driven_objects is None:
-                for dispid in range(0, 150):
-                    try:
-                        result = ole_defn.InvokeTypes(dispid, 0, 2, (9, 0), ())
-                        if result is not None and hasattr(result, '_oleobj_'):
-                            log.info(f"  [POINT PATTERN] DISPID {dispid} как свойство вернул: {type(result)}")
-                            driven_objects = result
-                            break
-                    except Exception:
-                        pass
-
-            if driven_objects is None or not hasattr(driven_objects, '_oleobj_'):
-                log.error("  [POINT PATTERN] Не удалось получить DrivenObjects ни одним способом")
-                raise RuntimeError("[FAIL POINT PATTERN] Не удалось получить коллекцию управляющих объектов для массива по точкам")
-
-            log.info(f"  [POINT PATTERN] Получен DrivenObjects: {type(driven_objects)}")
-
-            dlist = _wrap(K5.ksEntityCollection, driven_objects)
-            dlist.Clear()
-            for pt in points:
-                dlist.Add(_ole(pt))
-
-            # 5. Базовая точка и тип массива
-            try:
-                # BasePointType (DISPID 9) = 0 (ksCRAuto)
-                ole_defn.InvokeTypes(9, 0, 4, 0, (3,), 0)
-                # GeometryPattern (DISPID 8) = False
-                ole_defn.InvokeTypes(8, 0, 4, 0, (11,), False)
-            except Exception as e:
-                log.warning(f"  [POINT PATTERN] Не удалось установить доп. параметры: {e}")
-
-            # 6. Теперь оборачиваем сущность и вызываем Create()
-            ent = _wrap(K5.ksEntity, raw_ent)
-            created = ent.Create()
-
-            if not created:
-                log.error(f"[FAIL POINT PATTERN] Массив по точкам '{ent.name}' не построился!")
-                self.close()
-                raise RuntimeError("[FAIL POINT PATTERN] Массив по точкам не построился!")
-            self.part.Update()
-        except Exception as e:
-            log.error(f"[FAIL POINT PATTERN EXCEPTION] {e}\n{traceback.format_exc()}")
+        if not pt_pattern.Update():
             self.close()
-            raise
+            raise RuntimeError(
+                "[FAIL POINT PATTERN] IPointDrivenPattern.Update() вернул False!"
+            )
 
+        ent = _wrap(K5.ksEntity, raw_ent)
+        if not ent.Create():
+            log.error(
+                f"[FAIL POINT PATTERN] Массив по точкам '{ent.name}' не построился!"
+            )
+            self.close()
+            raise RuntimeError("[FAIL POINT PATTERN] Массив по точкам не построился!")
+
+        self.part.Update()
         vol_after = self.volume()
         log.info(
-            f"[POINT PATTERN OK] '{ent.name}': count={len(features)} features, {len(points)} points, "
+            f"[POINT PATTERN OK] '{ent.name}': features={len(features)}, driven={len(drv_ole_list)}, "
             f"V_before={vol_before:.2f} -> V_after={vol_after:.2f} (ΔV={vol_after - vol_before:.2f} мм³)"
         )
         return ent
 
-    def _find_edges_by_midpoint(self, target_x: float, target_z: float, tol: float = 1.0, vertical_only: bool = True, cylindrical_only: bool = False):
-        """Находит ребра, чьи середины близки к заданным (X, Z) координатам.
-        vertical_only=True — только вертикальные ребра (постоянные X,Z, меняющееся Y).
-        cylindrical_only=True — только цилиндрические ребра (входы в отверстия).
-        """
+    def _find_edges_by_midpoint(
+        self,
+        target_x: float,
+        target_z: float,
+        tol: float = 1.0,
+        vertical_only: bool = True,
+        cylindrical_only: bool = False,
+    ):
+        """Находит ребра, чьи середины близки к заданным (X, Z) координатам."""
         edges = []
-        raw_collection = self.part.EntityCollection(6)  # OBJ_FACE=6
+        raw_collection = self.part.EntityCollection(OBJ_FACE)
         if raw_collection is None:
-            log.warning("  [FIND EDGES] EntityCollection(6) returned None")
             return edges
         part_ents = _wrap(K5.ksEntityCollection, raw_collection)
-        if part_ents is None:
-            log.warning("  [FIND EDGES] Failed to wrap EntityCollection")
-            return edges
-        count = part_ents.GetCount()
-        for i in range(count):
-            raw_f = part_ents.GetByIndex(i)
-            if raw_f is None:
-                continue
-            f = _wrap(K5.ksEntity, raw_f)
+        for i in range(part_ents.GetCount()):
+            f = _wrap(K5.ksEntity, part_ents.GetByIndex(i))
             fdef = _wrap(K5.ksFaceDefinition, f.GetDefinition())
             if not fdef:
                 continue
@@ -1968,17 +2148,14 @@ class KompasPart:
                     edge = _wrap(K5.ksEdgeDefinition, loop_edges.GetByIndex(j))
                     if not edge:
                         continue
-                    # Проверяем цилиндричность если нужно
                     is_cyl = False
-                    r = 0.0
                     try:
                         res, h, r = edge.GetCylinderParam(0.0, 0.0)
-                        is_cyl = res and r > 0
+                        is_cyl = bool(res and r > 0)
                     except Exception:
                         pass
                     if cylindrical_only and not is_cyl:
                         continue
-                    # Находим середину ребра
                     v1 = _wrap(K5.ksVertexDefinition, edge.GetVertex(True))
                     v2 = _wrap(K5.ksVertexDefinition, edge.GetVertex(False))
                     if not v1 or not v2:
@@ -1987,26 +2164,22 @@ class KompasPart:
                     res2, x2, y2, z2 = v2.GetPoint(0.0, 0.0, 0.0)
                     if not (res1 and res2):
                         continue
-                    mx, my, mz = (x1 + x2) / 2.0, (y1 + y2) / 2.0, (z1 + z2) / 2.0
-                    # Проверяем вертикальность если нужно
+                    mx, mz = (x1 + x2) / 2.0, (z1 + z2) / 2.0
                     dx, dy, dz = abs(x1 - x2), abs(y1 - y2), abs(z1 - z2)
                     is_vert = dx < 1e-4 and dz < 1e-4 and dy > 1e-4
                     if vertical_only and not is_vert:
                         continue
-                    # Проверяем близость к целевой точке
                     if abs(mx - target_x) <= tol and abs(mz - target_z) <= tol:
                         edges.append(edge)
         return edges
 
     def get_window_vertical_edges(self, lo: float, bo: float):
-        """Возвращает 4 вертикальных ребра углов провального окна (скругление ro).
-        Окно центрировано: углы при X=±lo/2, Z=±bo/2.
-        """
+        """Возвращает 4 вертикальных ребра углов провального окна (скругление ro)."""
         edges = []
         corners = [
-            (-lo / 2.0,  bo / 2.0),
-            ( lo / 2.0,  bo / 2.0),
-            ( lo / 2.0, -bo / 2.0),
+            (-lo / 2.0, bo / 2.0),
+            (lo / 2.0, bo / 2.0),
+            (lo / 2.0, -bo / 2.0),
             (-lo / 2.0, -bo / 2.0),
         ]
         for cx, cz in corners:
@@ -2014,18 +2187,18 @@ class KompasPart:
             if found:
                 edges.append(found[0])
             else:
-                log.warning(f"  [WINDOW EDGES] Не найдено вертикальное ребро угла окна ({cx:.1f}, {cz:.1f})")
+                log.warning(
+                    f"  [WINDOW EDGES] Не найдено вертикальное ребро ({cx:.1f}, {cz:.1f})"
+                )
         return edges
 
     def get_plate_corner_edges(self, l: float, b: float):
-        """Возвращает 4 вертикальных ребра углов плиты (фаска f).
-        Плита центрирована: углы при X=±l/2, Z=±b/2.
-        """
+        """Возвращает 4 вертикальных ребра углов плиты (фаска f)."""
         edges = []
         corners = [
-            (-l / 2.0,  b / 2.0),
-            ( l / 2.0,  b / 2.0),
-            ( l / 2.0, -b / 2.0),
+            (-l / 2.0, b / 2.0),
+            (l / 2.0, b / 2.0),
+            (l / 2.0, -b / 2.0),
             (-l / 2.0, -b / 2.0),
         ]
         for cx, cz in corners:
@@ -2033,13 +2206,15 @@ class KompasPart:
             if found:
                 edges.append(found[0])
             else:
-                log.warning(f"  [PLATE EDGES] Не найдено вертикальное ребро угла плиты ({cx:.1f}, {cz:.1f})")
+                log.warning(
+                    f"  [PLATE EDGES] Не найдено вертикальное ребро ({cx:.1f}, {cz:.1f})"
+                )
         return edges
 
-    def get_hole_entrance_edges(self, face_top, dk: float, lk: float, bk: float):
-        """Возвращает 4 круговые ребра входов в отверстия на верхней грани (фаска fo).
-        Ищет круговые ребра во внутренних контурах верхней грани.
-        """
+    def get_hole_entrance_edges(
+        self, face_top, dk: float, lk: float, bk: float, centers: list = None
+    ):
+        """Возвращает круговые ребра входов в отверстия на плоской грани."""
         edges = []
         fdef = _wrap(K5.ksFaceDefinition, face_top.GetDefinition())
         if not fdef:
@@ -2048,11 +2223,10 @@ class KompasPart:
         if not loops:
             return edges
 
-        # Ожидаемые центры отверстий
-        expected_centers = [
-            (-lk / 2.0,  bk / 2.0),
-            ( lk / 2.0,  bk / 2.0),
-            ( lk / 2.0, -bk / 2.0),
+        expected_centers = centers or [
+            (-lk / 2.0, bk / 2.0),
+            (lk / 2.0, bk / 2.0),
+            (lk / 2.0, -bk / 2.0),
             (-lk / 2.0, -bk / 2.0),
         ]
         expected_radius = dk / 2.0
@@ -2061,50 +2235,25 @@ class KompasPart:
             loop = _wrap(K5.ksLoop, loops.GetByIndex(li))
             loop_edges = _wrap(K5.ksEdgeCollection, loop.EdgeCollection())
             if not loop_edges or loop_edges.GetCount() != 1:
-                continue  # Ищем контуры из одного ребра (круговые)
-
+                continue
             edge = _wrap(K5.ksEdgeDefinition, loop_edges.GetByIndex(0))
             if not edge:
                 continue
-
-            # Проверяем, что ребро круговое и находится в ожидаемом месте
             v1 = _wrap(K5.ksVertexDefinition, edge.GetVertex(True))
-            v2 = _wrap(K5.ksVertexDefinition, edge.GetVertex(False))
-            if not v1 or not v2:
+            if not v1:
                 continue
             res1, x1, y1, z1 = v1.GetPoint(0.0, 0.0, 0.0)
-            res2, x2, y2, z2 = v2.GetPoint(0.0, 0.0, 0.0)
-            if not (res1 and res2):
+            if not res1:
                 continue
-
-            # Для кругового ребра вершины совпадают (замкнутое ребро)
-            cx, cz = x1, z1
-            # Для кругового ребра вершины совпадают (замкнутое ребро) - точка на окружности
-            cx, cz = x1, z1
-            # Проверяем, близко ли к ожидаемым центрам с учетом радиуса
-            # Точка на окружности находится на расстоянии expected_radius от центра
-            expected_radius = dk / 2.0
             for exp_cx, exp_cz in expected_centers:
-                dist = ((cx - exp_cx) ** 2 + (cz - exp_cz) ** 2) ** 0.5
-                if abs(dist - expected_radius) < 1.0:  # расстояние до центра ~ радиус
+                dist = math.hypot(x1 - exp_cx, z1 - exp_cz)
+                if abs(dist - expected_radius) < 1.0:
                     edges.append(edge)
                     break
         return edges
 
-    def _get_var_value(self, var_name: str) -> float:
-        """Получить значение переменной по имени (из таблицы переменных детали)."""
-        part7 = self._get_part7()
-        if not part7:
-            raise RuntimeError(f"[FAIL VAR] Не удалось получить IPart7 для чтения переменной '{var_name}'")
-        try:
-            var = part7.Variable(var_name)
-            if var is None:
-                raise RuntimeError(f"[FAIL VAR] Переменная '{var_name}' не найдена в таблице переменных")
-            return float(var.Value)
-        except Exception as e:
-            raise RuntimeError(f"[FAIL VAR] Ошибка чтения переменной '{var_name}': {e}")
-
     # ===================== ПЕРЕМЕННЫЕ И ВЫРАЖЕНИЯ (API7 IFeature7.Variables) =====================
+
     def _get_part7(self):
         if not self.api7:
             return None
@@ -2116,6 +2265,18 @@ class KompasPart:
             return _wrap(K7.IPart7, doc7_3d.TopPart)
         except Exception:
             return None
+
+    def _get_var_value(self, var_name: str) -> float:
+        """Получить значение переменной по имени из таблицы переменных детали."""
+        part7 = self._get_part7()
+        if not part7:
+            raise RuntimeError(
+                f"[FAIL VAR] Не удалось получить IPart7 для '{var_name}'"
+            )
+        var = part7.Variable(var_name)
+        if var is None:
+            raise RuntimeError(f"[FAIL VAR] Переменная '{var_name}' не найдена")
+        return float(var.Value)
 
     def add_variable(
         self, name: str, value: float, note: str = "", expression: str = None
@@ -2148,7 +2309,7 @@ class KompasPart:
             result[name] = self.add_variable(name, value, note)
         return result
 
-    def _collect_vars_from_feat7(self, feat7, seen: set, out_list: list, collect_all: bool = False):
+    def _collect_vars_from_feat7(self, feat7, seen: set, out_list: list):
         """Извлекает все IVariable7 из заданного IFeature7."""
         for ext_flag in (True, False):
             for sketch_flag in (False, True):
@@ -2163,9 +2324,6 @@ class KompasPart:
                     try:
                         v = _wrap(K7.IVariable7, item)
                         name = str(v.Name or "")
-                        note = str(getattr(v, "ParameterNote", "") or "")
-                        if collect_all:
-                            log.info(f"[VAR DBG] name='{name}' note='{note}' val={v.Value}")
                         if not name or name in seen:
                             continue
                         seen.add(name)
@@ -2173,11 +2331,8 @@ class KompasPart:
                     except Exception:
                         pass
 
-    def _get_all_feature_vars(self, collect_all: bool = False) -> list:
-        """
-        Возвращает список всех внутренних переменных модели (v382, v386...) через API7 IFeature7,
-        включая переменные всех эскизов и 3D-операций!
-        """
+    def _get_all_feature_vars(self) -> list:
+        """Возвращает список всех переменных модели через API7 IFeature7."""
         out_list = []
         seen = set()
         part7 = self._get_part7()
@@ -2185,7 +2340,7 @@ class KompasPart:
             return out_list
         try:
             feat7_root = _wrap(K7.IFeature7, part7)
-            self._collect_vars_from_feat7(feat7_root, seen, out_list, collect_all)
+            self._collect_vars_from_feat7(feat7_root, seen, out_list)
             raw_sub = feat7_root.SubFeatures(0, True, False)
             sub_list = (
                 raw_sub
@@ -2194,7 +2349,7 @@ class KompasPart:
             )
             for item in sub_list:
                 sf = _wrap(K7.IFeature7, item)
-                self._collect_vars_from_feat7(sf, seen, out_list, collect_all)
+                self._collect_vars_from_feat7(sf, seen, out_list)
         except Exception as e:
             log.debug(f"Ошибка при чтении переменных API7: {e}")
         return out_list
@@ -2212,7 +2367,6 @@ class KompasPart:
             f"{v.Name}={float(v.Value):.2f}({getattr(v, 'ParameterNote', '')})"
             for v in new_vars
         ]
-        log.debug(f"  [VARS in {context}] Всего переменных: {len(all_vars)}")
         log.debug(f"  [VARS NEW in {context}] Появились переменные: {new_summary}")
 
         used = set()
@@ -2244,6 +2398,50 @@ class KompasPart:
                     f"  [VAR BIND MISS] Не найдена переменная со значением ~{exp_val:.2f} для формулы '{expr_str}'! "
                     f"Доступные новые: {new_summary}"
                 )
+
+    def _bind_api5_dimension_expressions(self, sk_ent, dims_to_bind: list):
+        """Привязывает выражения к линейным размерам API5, сопоставляя их по координатам точек (X1, Y1, X2, Y2)."""
+        if not self.api7:
+            return
+        sk_feat7 = self._find_sketch_feature7(sk_ent)
+        if not sk_feat7:
+            return
+
+        sk7 = _wrap(K7.ISketch, sk_feat7)
+        doc2d_7 = _wrap(K7.IKompasDocument2D, sk7.BeginEdit())
+        try:
+            v_mgr = _wrap(K7.IViewsAndLayersManager, doc2d_7.ViewsAndLayersManager)
+            views = _wrap(K7.IViews, v_mgr.Views)
+            v0 = _wrap(K7.IView, views.ActiveView)
+            sym_c = _wrap(K7.ISymbols2DContainer, v0)
+            ldims = _wrap(K7.ILineDimensions, sym_c.LineDimensions)
+            all_ldims = [
+                _wrap(K7.ILineDimension, ldims.LineDimension(i))
+                for i in range(ldims.Count)
+            ]
+
+            used_ld = set()
+            for _, x1, y1, x2, y2, expression in dims_to_bind:
+                best_idx = None
+                best_dist = 1e9
+                for idx, ld in enumerate(all_ldims):
+                    if idx in used_ld:
+                        continue
+                    d_direct = math.hypot(ld.X1 - x1, ld.Y1 - y1) + math.hypot(
+                        ld.X2 - x2, ld.Y2 - y2
+                    )
+                    d_swap = math.hypot(ld.X1 - x2, ld.Y1 - y2) + math.hypot(
+                        ld.X2 - x1, ld.Y2 - y1
+                    )
+                    d = min(d_direct, d_swap)
+                    if d < best_dist and d < 0.5:
+                        best_dist = d
+                        best_idx = idx
+                if best_idx is not None:
+                    used_ld.add(best_idx)
+                    self._make_dim_driving(all_ldims[best_idx], expression)
+        finally:
+            sk7.EndEdit()
 
     def rebuild(self):
         """Полное перестроение модели по таблице переменных."""
