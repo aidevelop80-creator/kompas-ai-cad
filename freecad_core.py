@@ -56,9 +56,10 @@ class FreeCadSketchBuilder:
         self.part = part_wrapper
         self._circles = []  # [(gid, xc, yc, r, is_constr)]
         self._segments = []  # [(gid, x1, y1, x2, y2, is_constr)]
-        self._arcs = []  # [(gid, x1, y1, x2, y2)]
+        self._arcs = []  # [(gid, xc, yc, r, x1, y1, x2, y2)]
         self._points = []  # [(gid, x, y)]
         self._pending_diam = []
+        self._pending_rad = []
         self._pending_lin = []
         self._pending_constraints = []
 
@@ -170,7 +171,7 @@ class FreeCadSketchBuilder:
             ),
             is_constr,
         )
-        self._arcs.append((gid, x1, y1, x2, y2))
+        self._arcs.append((gid, xc, yc, r, x1, y1, x2, y2))
         return self
 
     def point(self, x: float, y: float, style: int = STYLE_MAIN):
@@ -187,6 +188,27 @@ class FreeCadSketchBuilder:
     def align_v(self, p1: tuple[float, float], p2: tuple[float, float]):
         self._pending_constraints.append(
             ("align_v", (float(p1[0]), float(p1[1])), (float(p2[0]), float(p2[1])))
+        )
+        return self
+
+    def constrain_h(self, x1: float, y1: float, x2: float, y2: float):
+        """Накладывает ограничение Horizontal на отрезок (x1, y1)-(x2, y2)."""
+        self._pending_constraints.append(
+            ("seg_h", (float(x1), float(y1), float(x2), float(y2)))
+        )
+        return self
+
+    def constrain_v(self, x1: float, y1: float, x2: float, y2: float):
+        """Накладывает ограничение Vertical на отрезок (x1, y1)-(x2, y2)."""
+        self._pending_constraints.append(
+            ("seg_v", (float(x1), float(y1), float(x2), float(y2)))
+        )
+        return self
+
+    def concentric(self, xc: float, yc: float, equal_r: bool = True):
+        """Совмещает центры всех окружностей/дуг в точке (xc, yc) и опционально уравнивает радиусы."""
+        self._pending_constraints.append(
+            ("concentric", float(xc), float(yc), bool(equal_r))
         )
         return self
 
@@ -237,6 +259,16 @@ class FreeCadSketchBuilder:
         var_name: str = None,
     ):
         self._pending_diam.append((float(xc), float(yc), float(r), var_name))
+        return self
+
+    def dim_rad(
+        self,
+        xc: float,
+        yc: float,
+        r: float,
+        var_name: str = None,
+    ):
+        self._pending_rad.append((float(xc), float(yc), float(r), var_name))
         return self
 
     def dim_linear(
@@ -322,6 +354,13 @@ class FreeCadSketchBuilder:
                 return gid, 1
             if math.hypot(x2 - px, y2 - py) < 1e-2:
                 return gid, 2
+        for gid, xc, yc, _, x1, y1, x2, y2 in self._arcs:
+            if math.hypot(xc - px, yc - py) < 1e-2:
+                return gid, 3
+            if math.hypot(x1 - px, y1 - py) < 1e-2:
+                return gid, 1
+            if math.hypot(x2 - px, y2 - py) < 1e-2:
+                return gid, 2
         return None, None
 
     def _find_seg_gid(self, x1s: float, y1s: float, x2s: float, y2s: float):
@@ -361,16 +400,41 @@ class FreeCadSketchBuilder:
                         )
                     break
 
-        # 2. Диаметральные размеры
+        # 2. Диаметральные и радиусные размеры
         for xc, yc, r, expr in self._pending_diam:
             target = None
             for gid, cx, cy, cr, _ in self._circles:
                 if math.hypot(cx - xc, cy - yc) < 1e-2 and abs(cr - r) < 1e-2:
                     target = gid
                     break
+            if target is None:
+                for gid, cx, cy, cr, *_ in self._arcs:
+                    if math.hypot(cx - xc, cy - yc) < 1e-2 and abs(cr - r) < 1e-2:
+                        target = gid
+                        break
             if target is not None:
                 c_idx = self.sk.addConstraint(
                     Sketcher.Constraint("Diameter", target, float(2.0 * r))
+                )
+                if expr:
+                    self.sk.setExpression(
+                        f"Constraints[{c_idx}]", self.part._translate_expr(expr)
+                    )
+
+        for xc, yc, r, expr in self._pending_rad:
+            target = None
+            for gid, cx, cy, cr, _ in self._circles:
+                if math.hypot(cx - xc, cy - yc) < 1e-2 and abs(cr - r) < 1e-2:
+                    target = gid
+                    break
+            if target is None:
+                for gid, cx, cy, cr, *_ in self._arcs:
+                    if math.hypot(cx - xc, cy - yc) < 1e-2 and abs(cr - r) < 1e-2:
+                        target = gid
+                        break
+            if target is not None:
+                c_idx = self.sk.addConstraint(
+                    Sketcher.Constraint("Radius", target, float(r))
                 )
                 if expr:
                     self.sk.setExpression(
@@ -406,6 +470,7 @@ class FreeCadSketchBuilder:
                 self.sk.setExpression(
                     f"Constraints[{c_idx}]", self.part._translate_expr(expr)
                 )
+
         # 4. Геометрические ограничения
         for item in self._pending_constraints:
             kind = item[0]
@@ -415,6 +480,36 @@ class FreeCadSketchBuilder:
                 g2 = self._find_seg_gid(*s2)
                 if g1 is not None and g2 is not None:
                     self.sk.addConstraint(Sketcher.Constraint("Equal", g1, g2))
+            elif kind == "seg_h":
+                gid = self._find_seg_gid(*item[1])
+                if gid is not None:
+                    self.sk.addConstraint(Sketcher.Constraint("Horizontal", gid))
+            elif kind == "seg_v":
+                gid = self._find_seg_gid(*item[1])
+                if gid is not None:
+                    self.sk.addConstraint(Sketcher.Constraint("Vertical", gid))
+            elif kind == "concentric":
+                _, xc, yc, eq_r = item
+                gids = [
+                    gid
+                    for gid, cx, cy, *_ in self._circles
+                    if math.hypot(cx - xc, cy - yc) < 1e-2
+                ]
+                gids.extend(
+                    gid
+                    for gid, cx, cy, *_ in self._arcs
+                    if math.hypot(cx - xc, cy - yc) < 1e-2
+                )
+                if len(gids) >= 2:
+                    base_gid = gids[0]
+                    for other_gid in gids[1:]:
+                        self.sk.addConstraint(
+                            Sketcher.Constraint("Coincident", base_gid, 3, other_gid, 3)
+                        )
+                        if eq_r:
+                            self.sk.addConstraint(
+                                Sketcher.Constraint("Equal", base_gid, other_gid)
+                            )
             elif kind in ("align_h", "align_v"):
                 _, p1, p2 = item
                 if math.hypot(p2[0], p2[1]) < 1e-2:
@@ -481,6 +576,7 @@ class FreeCadSketchBuilder:
                     self.sk.addConstraint(
                         Sketcher.Constraint("Symmetric", g1, pos1, g2, pos2, axis_id)
                     )
+
         # 5. Автоматическая стыковка только дуг с отрезками/дугами (не трогая готовые углы rect/polygon)
         if self._arcs:
             arc_gids = {g for g, *_ in self._arcs}
@@ -488,7 +584,7 @@ class FreeCadSketchBuilder:
             for gid, x1, y1, x2, y2, _ in self._segments:
                 endpoints.append((gid, 1, x1, y1))
                 endpoints.append((gid, 2, x2, y2))
-            for gid, x1, y1, x2, y2 in self._arcs:
+            for gid, _, _, _, x1, y1, x2, y2 in self._arcs:
                 endpoints.append((gid, 1, x1, y1))
                 endpoints.append((gid, 2, x2, y2))
             for i in range(len(endpoints)):
@@ -625,7 +721,13 @@ class FreeCadPart:
         )
         return chosen_ref
 
-    def create_sketch(self, plane="xy", draw_fn=None, auto_parametrize: bool = True):
+    def create_sketch(
+        self,
+        plane="xy",
+        draw_fn=None,
+        auto_parametrize: bool = True,
+        offset_z: float = 0.0,
+    ):
         self._sketch_counter += 1
         sk = self.body.newObject(
             "Sketcher::SketchObject", f"Sketch_{self._sketch_counter}"
@@ -639,6 +741,10 @@ class FreeCadPart:
             )
             sk.AttachmentSupport = [(pl_obj, "")]
         sk.MapMode = "FlatFace"
+        if abs(float(offset_z)) > 1e-6:
+            sk.AttachmentOffset = App.Placement(
+                App.Vector(0.0, 0.0, float(offset_z)), App.Rotation()
+            )
 
         builder = FreeCadSketchBuilder(sk, self)
         if callable(draw_fn):
@@ -653,9 +759,14 @@ class FreeCadPart:
                 self._sketch_axes[sk.Name] = "H_Axis"
             else:
                 self._sketch_axes[sk.Name] = "Axis0"
-        dof = sk.solve()
+        solve_code = sk.solve()
+        if solve_code < 0:
+            raise RuntimeError(
+                f"[FAIL SKETCH] Эскиз '{sk.Name}' имеет ошибки ограничений (solve={solve_code}: "
+                "-1=ошибка солвера, -2=избыточные, -3=конфликтующие, -4=переопределён)!"
+            )
         self.doc.recompute()
-        log.info(f"[SKETCH OK] '{sk.Name}' (DoF={dof})")
+        log.info(f"[SKETCH OK] '{sk.Name}' (solve={solve_code})")
         return sk
 
     def create_sketch_on_face(
@@ -979,6 +1090,10 @@ class FreeCadPart:
             f"[SM BEND OK] '{bend.Name}': edges={len(edge_names)}, L={length}, R={bend_radius}, "
             f"AutoMiter={auto_miter}, V={vol_before:.2f} -> {vol_after:.2f}"
         )
+        if vol_after <= vol_before + 1e-9:
+            raise RuntimeError(
+                f"[FAIL SM BEND] '{bend.Name}' не увеличил объём ({vol_before:.2f} -> {vol_after:.2f})!"
+            )
         return bend
 
     def add_sheet_fold(
@@ -1018,6 +1133,8 @@ class FreeCadPart:
         self.body.Tip = fold
         self.doc.recompute()
         vol_after = self.volume()
+        if fold.Shape.isNull() or vol_after <= 1e-9:
+            raise RuntimeError(f"[FAIL SM FOLD] '{fold.Name}' не построился!")
         log.info(
             f"[SM FOLD OK] '{fold.Name}': R={bend_radius}, Angle={angle}°, V={vol_before:.2f} -> {vol_after:.2f}"
         )
@@ -1042,25 +1159,59 @@ class FreeCadPart:
             found.append(f"Edge{idx + 1}")
         return found
 
+    def find_edge_at(
+        self,
+        z_coord: float,
+        x_coord: float = None,
+        y_coord: float = None,
+        min_len: float = 100.0,
+        tol: float = 0.5,
+    ) -> tuple[str, float]:
+        """Возвращает (EdgeN, длина) прямолинейного ребра с заданными координатами."""
+        tip = self.body.Tip
+        for idx, edge in enumerate(tip.Shape.Edges):
+            if edge.Curve.TypeId != "Part::GeomLine" or edge.Length < min_len:
+                continue
+            p1, p2 = edge.Vertexes[0].Point, edge.Vertexes[1].Point
+            if abs(p1.z - z_coord) > tol or abs(p2.z - z_coord) > tol:
+                continue
+            if x_coord is not None and (
+                abs(p1.x - x_coord) > tol or abs(p2.x - x_coord) > tol
+            ):
+                continue
+            if y_coord is not None and (
+                abs(p1.y - y_coord) > tol or abs(p2.y - y_coord) > tol
+            ):
+                continue
+            return f"Edge{idx + 1}", float(edge.Length)
+        raise RuntimeError(
+            f"[FAIL EDGE] Не найдено ребро на Z={z_coord}, X={x_coord}, Y={y_coord}!"
+        )
+
     def find_wall_end_faces(
-        self, normal_axis: str = "x", min_z_height: float = 8.0
+        self,
+        normal_axis: str = "x",
+        min_z_height: float = 8.0,
+        min_thickness: float = 0.5,
+        max_thickness: float = 5.0,
+        min_z_max: float = 10.0,
     ) -> list[str]:
-        """Находит вертикальные торцовые грани стенок (нормаль вдоль 'x' или 'y', толщина ~2 мм)."""
+        """Находит вертикальные торцовые грани стенок (нормаль вдоль 'x' или 'y')."""
         tip = self.body.Tip
         found = []
         for idx, face in enumerate(tip.Shape.Faces):
             if face.Surface.TypeId != "Part::GeomPlane":
                 continue
             bb = face.BoundBox
-            if (bb.ZMax - bb.ZMin) < min_z_height or bb.ZMax < 10.0:
+            if (bb.ZMax - bb.ZMin) < min_z_height or bb.ZMax < min_z_max:
                 continue
             if (
                 normal_axis == "x"
                 and bb.XLength < 0.05
-                and 1.0 < bb.YLength < 3.0
+                and min_thickness < bb.YLength < max_thickness
                 or normal_axis == "y"
                 and bb.YLength < 0.05
-                and 1.0 < bb.XLength < 3.0
+                and min_thickness < bb.XLength < max_thickness
             ):
                 found.append(f"Face{idx + 1}")
         return found
@@ -1075,6 +1226,7 @@ class FreeCadPart:
         offset: float = 0.2,
         refine: bool = True,
         reversed_dir: bool = False,
+        length_expr: str = None,
     ):
         """Нативное удлинение торцов стенок листового тела (SMExtrudeWall) для замыкания углов."""
         from SheetMetalExtendCmd import SMExtrudeWall
@@ -1095,15 +1247,214 @@ class FreeCadPart:
         ext.UseSubtraction = bool(use_subtraction)
         ext.Offset = float(offset)
         ext.Refine = bool(refine)
+        if length_expr:
+            ext.setExpression("length", self._translate_expr(length_expr))
 
         self.body.Tip = ext
         self.doc.recompute()
         vol_after = self.volume()
         log.info(
-            f"[SM EXTEND OK] '{ext.Name}': faces={len(face_names)}, L={length}, "
+            f"[SM EXTEND OK] '{ext.Name}': faces={len(face_names)}, L={length} (expr='{length_expr}'), "
             f"Offset={offset}, V={vol_before:.2f} -> {vol_after:.2f}"
         )
+        if vol_after <= vol_before + 1e-9:
+            raise RuntimeError(
+                f"[FAIL SM EXTEND] '{ext.Name}' не изменил объём ({vol_before:.2f} -> {vol_after:.2f})!"
+            )
         return ext
+
+    def find_corner_bend_edges(
+        self, z_coord: float = 2.0, tol: float = 0.2
+    ) -> list[tuple[tuple[int, int], list[str]]]:
+        """Находит пары смежных рёбер сгибов у углов дна на высоте Z: [((sx, sy), [edge_x, edge_y]), ...]."""
+        tip = self.body.Tip
+        shape = tip.Shape
+        x_edges = []
+        y_edges = []
+        for idx, edge in enumerate(shape.Edges):
+            if edge.Curve.TypeId != "Part::GeomLine" or len(edge.Vertexes) != 2:
+                continue
+            p1, p2 = edge.Vertexes[0].Point, edge.Vertexes[1].Point
+            if abs(p1.z - z_coord) > tol or abs(p2.z - z_coord) > tol:
+                continue
+            faces = shape.ancestorsOfType(edge, Part.Face)
+            has_plane = any(f.Surface.TypeId == "Part::GeomPlane" for f in faces)
+            has_cyl = any(f.Surface.TypeId == "Part::GeomCylinder" for f in faces)
+            if not (has_plane and has_cyl):
+                continue
+            if abs(p1.x - p2.x) < 0.05 and abs(p1.y - p2.y) > 5.0:
+                x_edges.append((0.5 * (p1.x + p2.x), f"Edge{idx + 1}", p1, p2))
+            elif abs(p1.y - p2.y) < 0.05 and abs(p1.x - p2.x) > 5.0:
+                y_edges.append((0.5 * (p1.y + p2.y), f"Edge{idx + 1}", p1, p2))
+
+        corners = []
+        for x_val, ex_name, px1, px2 in x_edges:
+            for y_val, ey_name, py1, py2 in y_edges:
+                dist_x = min(abs(px1.y - y_val), abs(px2.y - y_val))
+                dist_y = min(abs(py1.x - x_val), abs(py2.x - x_val))
+                if dist_x < 10.0 and dist_y < 10.0:
+                    quad = (1 if x_val > 0 else -1, 1 if y_val > 0 else -1)
+                    corners.append((quad, [ex_name, ey_name]))
+        corners.sort(key=lambda c: c[0])
+        return corners
+
+    def add_corner_relief(
+        self,
+        edge_names: list[str],
+        relief_type: str = "Weld",
+        size: float = 3.0,
+        size_ratio: float = 1.5,
+        k_factor: float = 0.4,
+        x_offset: float = 0.0,
+        y_offset: float = 0.0,
+    ):
+        """Угловая разгрузка сгибов (SMCornerRelief: Circle, Square, Weld, ...)."""
+        from SheetMetalCornerReliefCmd import SMCornerRelief
+
+        vol_before = self.volume()
+        prev_tip = self.body.Tip
+        self._op_counter += 1
+        relief = self.doc.addObject(
+            "PartDesign::FeaturePython", f"CornerRelief_{self._op_counter}"
+        )
+        SMCornerRelief(relief, prev_tip, list(edge_names))
+        self.body.addObject(relief)
+
+        relief.ReliefSketch = str(relief_type)
+        relief.Size = float(size)
+        relief.SizeRatio = float(size_ratio)
+        relief.kfactor = float(k_factor)
+        relief.XOffset = float(x_offset)
+        relief.YOffset = float(y_offset)
+
+        self.body.Tip = relief
+        self.doc.recompute()
+        vol_after = self.volume()
+        if relief.Shape.isNull() or abs(vol_after - vol_before) < 1e-6:
+            raise RuntimeError(
+                f"[FAIL SM CORNER RELIEF] '{relief.Name}' не изменил геометрию (V={vol_before:.2f} -> {vol_after:.2f})!"
+            )
+        log.info(
+            f"[SM CORNER RELIEF OK] '{relief.Name}': type={relief_type}, size={size}, "
+            f"V={vol_before:.2f} -> {vol_after:.2f}"
+        )
+        return relief
+
+    def unfold(
+        self,
+        face_ref,
+        k_factor: float = 0.4,
+        k_factor_standard: str = "ansi",
+        generate_sketch: bool = True,
+        separate_sketch_layers: bool = True,
+        show_bend_angles: bool = False,
+        dxf_path: str = None,
+        svg_path: str = None,
+        offset: tuple[float, float, float] = None,
+        assert_dims: tuple[float, float, float] = None,
+        tol: float = 0.3,
+    ):
+        """Строит развёртку листового тела от плоской грани (SMUnfold) и экспортирует .dxf/.svg."""
+        from SheetMetalUnfoldCmd import SMUnfold
+
+        tip = self.body.Tip
+        if tip is None or tip.Shape.isNull():
+            raise RuntimeError("[FAIL UNFOLD] Тело детали пустое!")
+
+        _, face_sub = face_ref
+        unfold_obj = self.doc.addObject(
+            "Part::FeaturePython", f"{self.body.Name}_Unfold"
+        )
+        SMUnfold(unfold_obj, tip, [face_sub])
+
+        gui_up = bool(getattr(App, "GuiUp", False))
+        unfold_obj.MaterialSheet = "_manual"
+        unfold_obj.KFactor = float(k_factor)
+        unfold_obj.KFactorStandard = str(k_factor_standard)
+        unfold_obj.ManualRecompute = False
+        unfold_obj.GenerateSketch = bool(generate_sketch and gui_up)
+        unfold_obj.SeparateSketchLayers = bool(separate_sketch_layers)
+        unfold_obj.ShowBendAngles = bool(show_bend_angles)
+        unfold_obj.GenerateBendCuts = False
+
+        self.doc.recompute()
+
+        if unfold_obj.Shape.isNull() or unfold_obj.Shape.Volume <= 1e-9:
+            raise RuntimeError(
+                f"[FAIL UNFOLD] Развёртка '{unfold_obj.Name}' не построилась!"
+            )
+
+        bb = unfold_obj.Shape.optimalBoundingBox(False, False)
+        dims = (float(bb.XLength), float(bb.YLength), float(bb.ZLength))
+        if assert_dims is not None:
+            actual_sorted = sorted(dims)
+            exp_sorted = sorted(float(v) for v in assert_dims)
+            if any(abs(a - e) > tol for a, e in zip(actual_sorted, exp_sorted)):
+                raise ValueError(
+                    f"[FAIL UNFOLD BBOX] Ожидалась развёртка ({assert_dims[0]:.2f} x {assert_dims[1]:.2f} x {assert_dims[2]:.2f}), "
+                    f"фактически ({dims[0]:.2f} x {dims[1]:.2f} x {dims[2]:.2f}) мм"
+                )
+
+        sketch_names = list(getattr(unfold_obj, "UnfoldSketches", []) or [])
+        if dxf_path or svg_path:
+            export_objs = [
+                self.doc.getObject(n)
+                for n in sketch_names
+                if self.doc.getObject(n) is not None
+            ]
+            tmp_2d = None
+            if not export_objs:
+                xy_faces = [
+                    f
+                    for f in unfold_obj.Shape.Faces
+                    if f.Surface.TypeId == "Part::GeomPlane"
+                    and abs(f.normalAt(0, 0).z) > 0.99
+                ]
+                planar_faces = xy_faces or [
+                    f
+                    for f in unfold_obj.Shape.Faces
+                    if f.Surface.TypeId == "Part::GeomPlane"
+                ]
+                if planar_faces:
+                    top_face = max(planar_faces, key=lambda f: f.Area)
+                    edges_2d = Part.Compound(top_face.Edges)
+                    edges_2d.translate(App.Vector(0.0, 0.0, -edges_2d.BoundBox.ZMin))
+                    tmp_2d = self.doc.addObject("Part::Feature", "_Unfold_2D_Tmp")
+                    tmp_2d.Shape = edges_2d
+                    self.doc.recompute()
+                    export_objs = [tmp_2d]
+
+            try:
+                if dxf_path and export_objs:
+                    import importDXF
+
+                    abs_dxf = os.path.abspath(dxf_path)
+                    os.makedirs(os.path.dirname(abs_dxf), exist_ok=True)
+                    importDXF.export(export_objs, abs_dxf)
+                    log.info(f"[OK EXPORT DXF] {abs_dxf} (объектов={len(export_objs)})")
+
+                if svg_path and export_objs:
+                    import importSVG
+
+                    abs_svg = os.path.abspath(svg_path)
+                    os.makedirs(os.path.dirname(abs_svg), exist_ok=True)
+                    importSVG.export(export_objs, abs_svg)
+                    log.info(f"[OK EXPORT SVG] {abs_svg} (объектов={len(export_objs)})")
+            finally:
+                if tmp_2d is not None:
+                    self.doc.removeObject(tmp_2d.Name)
+
+        if offset is not None:
+            unfold_obj.Placement.Base = App.Vector(
+                float(offset[0]), float(offset[1]), float(offset[2])
+            )
+            self.doc.recompute()
+
+        log.info(
+            f"[UNFOLD OK] '{unfold_obj.Name}': {dims[0]:.2f} x {dims[1]:.2f} x {dims[2]:.2f} мм, "
+            f"V={unfold_obj.Shape.Volume:.2f} мм³, sketches={sketch_names}"
+        )
+        return unfold_obj
 
     def volume(self) -> float:
         self.doc.recompute()
@@ -1113,7 +1464,7 @@ class FreeCadPart:
 
     def bbox(self) -> tuple[float, float, float]:
         self.doc.recompute()
-        bb = self.body.Shape.BoundBox
+        bb = self.body.Shape.optimalBoundingBox(False, False)
         return float(bb.XLength), float(bb.YLength), float(bb.ZLength)
 
     def assert_bbox(self, exp_x: float, exp_y: float, exp_z: float, tol: float = 0.1):
