@@ -310,6 +310,11 @@ class SketchBuilder:
         self.align_h((-float(w) / 2.0, 0.0), (0.0, 0.0))
         return self
 
+    def fix_point(self, x: float, y: float):
+        """Фиксирует точку или вершину отрезка в координатах (x, y) (KC_FIXED_POINT=1)."""
+        self.pending_constraints.append(("fix_pt", (float(x), float(y))))
+        return self
+
     def dim_linear(
         self,
         x1: float,
@@ -1237,6 +1242,20 @@ class KompasPart:
                                 ok = con.Create()
                                 s1.Update()
                                 log.debug(f"  [API7 CONSTRAINTS] equal_len -> ok={ok}")
+                        elif kind == "fix_pt":
+                            o1, i1 = _find_pt(item[1])
+                            if o1 is not None:
+                                dobj1 = _wrap(K7.IDrawingObject1, o1)
+                                con = _wrap(
+                                    K7.IParametriticConstraint, dobj1.NewConstraint()
+                                )
+                                con.ConstraintType = KC_FIXED_POINT
+                                con.Index = i1
+                                ok = con.Create()
+                                o1.Update()
+                                log.debug(
+                                    f"  [API7 CONSTRAINTS] fix_pt {item[1]} -> ok={ok}"
+                                )
             finally:
                 sk7.EndEdit()
         except Exception as e:
@@ -1732,6 +1751,11 @@ class KompasPart:
         width: float = None,
         distance_left: float = None,
         distance_right: float = None,
+        widening_left: float = None,
+        widening_right: float = None,
+        without_angle_release: bool = False,
+        without_bend_release: bool = False,
+        dismissal_angle_type: int = 0,
         offset: float = 0.0,
         length_expr: str = None,
         radius_expr: str = None,
@@ -1764,6 +1788,10 @@ class KompasPart:
         bend.Offset = float(offset)
         bend.LeftSideType = int(side_type)
         bend.RightSideType = int(side_type)
+        if widening_left is not None:
+            bend.WideningLeftSide = float(widening_left)
+        if widening_right is not None:
+            bend.WideningRightSide = float(widening_right)
         if width is not None:
             bend.Width = float(width)
         if distance_left is not None:
@@ -1771,6 +1799,9 @@ class KompasPart:
         if distance_right is not None:
             bend.DistanceRightSide = float(distance_right)
         bend.BendRelease = int(bend_release)
+        bend.DismissalAngleType = int(dismissal_angle_type)
+        bend.WithoutAngleRelease = bool(without_angle_release)
+        bend.WithoutBendRelease = bool(without_bend_release)
         bend.Straighten = False
 
         if not bend.Update():
@@ -1806,12 +1837,17 @@ class KompasPart:
     def add_line_bend(
         self,
         bend_object,
+        face=None,
         bend_radius: float = 1.0,
         angle: float = 90.0,
         k_factor: float = 0.4,
         direction: bool = True,
         bend_left_fixed: bool = False,
         internal_radius: bool = True,
+        bend_type: int = 2,
+        angle_type: bool = True,
+        unfold_type: int = 0,
+        dismissal_angle_type: int = 0,
         radius_expr: str = None,
         angle_expr: str = None,
         k_factor_expr: str = None,
@@ -1843,12 +1879,21 @@ class KompasPart:
             mo_line = self._to_model_object7(bend_object)
 
         lb.Line = _ole(mo_line)
+        if face is not None:
+            mo_face = self._to_model_object7(face)
+            lb.Faces = VARIANT(
+                pythoncom.VT_ARRAY | pythoncom.VT_DISPATCH, [_ole(mo_face)]
+            )
         lb.Direction = bool(direction)
         lb.Radius = float(bend_radius)
         lb.InternalRadius = bool(internal_radius)
         lb.Angle = float(angle)
+        lb.AngleType = bool(angle_type)
         lb.BendCoefficient = float(k_factor)
         lb.BendLeftSideFixed = bool(bend_left_fixed)
+        lb.BendType = int(bend_type)
+        lb.UnfoldType = int(unfold_type)
+        lb.DismissalAngleType = int(dismissal_angle_type)
         lb.Straighten = False
 
         if not lb.Update():
@@ -1878,7 +1923,7 @@ class KompasPart:
         return lb
 
     def get_sketch_line_segments(self, sketch_ent):
-        """Возвращает список ILineSegment из эскиза (для Сгиб по линии)."""
+        """Возвращает список 3D IModelObject линий эскиза (ModelObjectType == 7) для 'Сгиб по линии'."""
         sk_feat7 = self._find_sketch_feature7(sketch_ent)
         if sk_feat7 is None:
             log.warning(
@@ -1886,23 +1931,21 @@ class KompasPart:
             )
             return []
 
-        sk7 = _wrap(K7.ISketch, sk_feat7)
-        doc2d_7 = _wrap(K7.IKompasDocument2D, sk7.BeginEdit())
-        try:
-            v_mgr = _wrap(K7.IViewsAndLayersManager, doc2d_7.ViewsAndLayersManager)
-            views = _wrap(K7.IViews, v_mgr.Views)
-            v0 = _wrap(K7.IView, views.ActiveView)
-            dc = _wrap(K7.IDrawingContainer, v0)
-            lsegs = _wrap(K7.ILineSegments, dc.LineSegments)
-            segments = [
-                _wrap(K7.ILineSegment, lsegs.LineSegment(i)) for i in range(lsegs.Count)
-            ]
-            log.info(
-                f"[GET SEGMENTS] Найдено {len(segments)} линий в эскизе {sketch_ent.name}"
-            )
-            return segments
-        finally:
-            sk7.EndEdit()
+        raw_mos = sk_feat7.ModelObjects(0)
+        mos = (
+            list(raw_mos)
+            if isinstance(raw_mos, (list, tuple))
+            else ([raw_mos] if raw_mos else [])
+        )
+        segments = []
+        for m in mos:
+            mo = _wrap(K7.IModelObject, m)
+            if mo is not None and mo.ModelObjectType == 7:
+                segments.append(mo)
+        log.info(
+            f"[GET SEGMENTS] Найдено {len(segments)} 3D-линий в эскизе {sketch_ent.name}"
+        )
+        return segments
 
     def close_corners(self, *args, **kwargs):
         """Заглушка совместимости: в КОМПАС-3D V16 o3d_sheetMetalClosedCorner (539)
