@@ -615,13 +615,26 @@ class KompasPart:
     def create_offset_plane(
         self, base_plane: str | int | object, offset: float, expr: str = None
     ):
-        """Создает смещенную плоскость параллельно базовой."""
+        """Создает смещенную плоскость параллельно базовой.
+        base_plane: имя базовой плоскости ("xy", "xz", "yz"), её тип (int), или ksEntity грани/плоскости.
+        expr: выражение для параметризации смещения.
+        """
+        # Если передан ksEntity (грань или плоскость), используем его напрямую
         if not isinstance(base_plane, (str, int)):
             base_ent = _wrap(K5.ksEntity, base_plane)
         else:
-            base_ent = self.get_base_plane(base_plane)
+            # Получаем базовую плоскость как сырой COM-объект
+            if isinstance(base_plane, str):
+                p_map = {
+                    "xy": PLANE_XY, "xoy": PLANE_XY, "yx": PLANE_XY,
+                    "xz": PLANE_XZ, "xoz": PLANE_XZ, "zx": PLANE_XZ,
+                    "yz": PLANE_YZ, "yoz": PLANE_YZ, "zy": PLANE_YZ,
+                }
+                plane_type = p_map.get(base_plane.lower().strip(), PLANE_XY)
+            else:
+                plane_type = base_plane
+            base_ent_raw = self.part.GetDefaultEntity(plane_type)
 
-        vars_before = set(self._get_all_feature_var_names())
         ent = _wrap(K5.ksEntity, self.part.NewEntity(OBJ_PLANE_OFFSET))
         defn = _wrap(K5.ksPlaneOffsetDefinition, ent.GetDefinition())
         base_ent_raw = _ole(base_ent)
