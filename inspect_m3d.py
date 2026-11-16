@@ -99,6 +99,13 @@ def _inspect_sketch_geometry(sk_ent, sf7) -> list[str]:
                 lines_info.append(
                     f"  - Дуга [style={a.Style}]: Центр `({a.Xc:.2f}, {a.Yc:.2f})`, `R={a.Radius:.2f}`"
                 )
+            # 4. Точки (Points)
+            pts = _wrap(K7.IPoints, dc.Points)
+            for i in range(pts.Count):
+                p = _wrap(K7.IPoint, pts.Point(i))
+                lines_info.append(
+                    f"  - Точка [style={p.Style}]: `({p.X:.2f}, {p.Y:.2f})`"
+                )
         finally:
             sk7.EndEdit()
     except Exception:
