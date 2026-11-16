@@ -17,10 +17,10 @@ sdk_ref/include/
 tree_md.py
 tree.md
 *.bak
+*.FCBak
 *.m3~
 *.log
 
 # Результаты сборки (модели и рендеры)
-output/
 build_run.log
 sdk_ref/kompas_api5_v16_debug.py

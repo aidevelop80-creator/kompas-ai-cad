@@ -638,11 +638,12 @@ class KompasPart:
         ent = _wrap(K5.ksEntity, self.part.NewEntity(OBJ_PLANE_OFFSET))
         defn = _wrap(K5.ksPlaneOffsetDefinition, ent.GetDefinition())
         base_ent_raw = _ole(base_ent)
-        try:
-            defn.SetPlane(base_ent_raw)
-        except Exception:
-            dyn_defn = dynamic.DumbDispatch(defn._oleobj_)
-            dyn_defn.SetPlane(base_ent_raw)
+
+        # Используем динамический диспетч для SetPlane, так как в сгенерированном враппере
+        # метод может называться иначе или иметь другую сигнатуру
+        dyn_defn = dynamic.DumbDispatch(defn._oleobj_)
+        dyn_defn.SetPlane(base_ent_raw)
+
         defn.direction = True if offset >= 0 else False
         defn.offset = abs(float(offset))
         if not ent.Create():
