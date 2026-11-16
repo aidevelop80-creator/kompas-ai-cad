@@ -2664,7 +2664,8 @@ class KompasPart:
                 pass
         raster = _wrap(K5.ksRasterFormatParam, self.doc3d.RasterFormatParam())
         raster.Init()
-        raster.format = 4
+        # format: 3=PNG, 4=TIFF (используем PNG для соответствия расширению .png)
+        raster.format = 3
         raster.colorBPP = 24
         raster.colorType = 3
         raster.extResolution = 150
