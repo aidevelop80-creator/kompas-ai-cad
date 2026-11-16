@@ -27,6 +27,15 @@
 ```text
 ├── CLAUDE.md                  # Инженерные правила и стандарты построения для ИИ-агента
 ├── example/                   # Эталонные модели (.m3d), слепки (_blueprint.md) и скриншоты
+│   ├── Shaft_D44_L135_example.m3d         # Вал ступенчатый (эталон)
+│   ├── Shaft_D44_L135_example_blueprint.md
+│   ├── Корпус_example.m3d                  # Листовой корпус (эталон)
+│   ├── Корпус_example_blueprint.md
+│   ├── Крышка_example.m3d                  # Листовая крышка (эталон)
+│   ├── Крышка_example_blueprint.md
+│   ├── die_plate/                          # Нижняя плита штампа
+│   ├── flange/                             # Фланцевая втулка
+│   └── pulley/                             # Ролик / шкив
 ├── output/                    # Сгенерированные модели (.m3d, .FCStd, .stl), развёртки (.dxf, .svg) и рендеры (.png)
 ├── sdk_ref/                   # Обёртки типов КОМПАС API5 / API7 и заголовочные файлы SDK
 ├── kompas_core.py             # Ядро управления КОМПАС-3D
@@ -38,22 +47,27 @@
 ├── build_die_plate.py         # Нижняя плита штампа (КОМПАС-3D)
 ├── build_housing.py           # Листовой корпус с полками и массивом (КОМПАС-3D)
 ├── build_cover.py             # Листовая крышка с вырезами и дугами (КОМПАС-3D)
+├── build_shaft.py             # Ступенчатый вал (КОМПАС-3D)
 ├── build_flange_fc.py         # Фланцевая втулка (FreeCAD 1.1)
 ├── build_pulley_fc.py         # Ролик / шкив со шпоночным пазом (FreeCAD 1.1)
 ├── build_die_plate_fc.py      # Нижняя плита штампа (FreeCAD 1.1)
 ├── build_housing_fc.py        # Листовой корпус + развёртка DXF/SVG (FreeCAD 1.1)
-└── build_cover_fc.py          # Листовая крышка + развёртка DXF/SVG (FreeCAD 1.1)
+├── build_cover_fc.py          # Листовая крышка + развёртка DXF/SVG (FreeCAD 1.1)
+└── build_shaft_fc.py          # Ступенчатый вал (FreeCAD 1.1)
 ```
 
 ## Покрытие эталонных моделей
 
-| Модель | Скрипт (КОМПАС-3D) | Скрипт (FreeCAD) | Габариты (мм) | Объём эталона (мм³) |
+| Модель | Скрипт (КОМПАС-3Д) | Скрипт (FreeCAD) | Габариты (мм) | Объём эталона (мм³) |
 | :--- | :--- | :--- | :--- | :--- |
 | Фланцевая втулка | `build_flange.py` | `build_flange_fc.py` | `100.00 x 60.00 x 100.00` | `142314.15` |
 | Ролик (шкив) | `build_pulley.py` | `build_pulley_fc.py` | `80.00 x 24.00 x 80.00` | `76858.08` |
 | Плита матрицы | `build_die_plate.py` | `build_die_plate_fc.py` | `160.00 x 25.00 x 120.00` | `387060.87` |
 | Листовой корпус | `build_housing.py` | `build_housing_fc.py` | `194.00 x 36.02 x 147.00` | `100703.68` |
 | Листовая крышка | `build_cover.py` | `build_cover_fc.py` | `84.20 x 54.20 x 16.00` | `14597.98` |
+| Ступенчатый вал | `build_shaft.py` | `build_shaft_fc.py` | `135.00 x 44.00 x 44.00` | `~165000` |
+
+> **Примечание:** В `example/` также находятся дополнительные эталонные модели без готовых скриптов воспроизведения — **Корпус** (`Корпус_example.m3d`), **Крышка** (`Крышка_example.m3d`) — их `*_blueprint.md` доступны для изучения и переноса во FreeCAD.
 
 ## Быстрый старт
 
@@ -79,6 +93,7 @@ mkdir sdk_ref
 .venv\Scripts\python.exe build_die_plate.py
 .venv\Scripts\python.exe build_housing.py
 .venv\Scripts\python.exe build_cover.py
+.venv\Scripts\python.exe build_shaft.py
 ```
 Готовые `.m3d` и `.png` сохраняются в папку `output\`.
 
@@ -86,6 +101,9 @@ mkdir sdk_ref
 Требуется установленный **FreeCAD 1.1** (`C:\Program Files\FreeCAD 1.1\`) и аддон **`FreeCAD_SheetMetal`** (для листовых деталей и развёрток). Запуск выполняется из основного `.venv` через мост `run_freecad.py`:
 ```bat
 .venv\Scripts\python.exe run_freecad.py build_flange_fc.py output\Flange_D100_h60.FCStd
+.venv\Scripts\python.exe run_freecad.py build_pulley_fc.py output\Pulley_D80_b24.FCStd
+.venv\Scripts\python.exe run_freecad.py build_die_plate_fc.py output\DiePlate_160x120x25.FCStd
+.venv\Scripts\python.exe run_freecad.py build_shaft_fc.py output\Shaft_D44_L135.FCStd
 .venv\Scripts\python.exe run_freecad.py build_cover_fc.py output\Cover_84x54x16.FCStd
 .venv\Scripts\python.exe run_freecad.py build_housing_fc.py output\Housing_194x36x147.FCStd
 ```
@@ -126,7 +144,7 @@ mkdir sdk_ref
 
 1. **Тело вращения (вал / втулка / штуцер):**
    ```text
-   Построй ступенчатый вал Shaft_D44_L135 в КОМПАС-3D и FreeCAD 1.1+ по правилам CLAUDE.md.
+   Построй ступенчатый вал Shaft_D44_L135 в КОМПАС-3D (build_shaft.py) и FreeCAD 1.1+ (build_shaft_fc.py) по правилам CLAUDE.md.
    База: вращение (revolve) вокруг оси X. 4 ступени: d1=24/l1=35, d2=32/l2=45, d3=44/l3=15, d4=28/l4=40.
    Элементы: закрытый шпоночный паз на 2-й ступени (bk=10, lk=32, tk=5), сквозное радиальное
    отверстие do=6 по центру 4-й ступени, торцовые фаски c=1.5x45°. Габариты: 135.00 x 44.00 x 44.00 мм.
