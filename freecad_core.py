@@ -799,7 +799,15 @@ class FreeCadPart:
         n = self._sketch_normal(sketch_ent)
         is_xz_plane = abs(n.y) > 0.99 and n.y < 0.0
         if direction == DT_BOTH or direction == DT_MIDDLE:
-            pad.Midplane = True
+            if hasattr(pad, "SideType"):
+                enums = pad.getEnumerationsOfProperty("SideType")
+                sym_val = next((e for e in enums if "symmetric" in e.lower()), None)
+                if sym_val:
+                    pad.SideType = sym_val
+                else:
+                    pad.Midplane = True
+            else:
+                pad.Midplane = True
         elif direction == DT_REVERSE:
             pad.Reversed = not is_xz_plane
         else:
@@ -846,7 +854,15 @@ class FreeCadPart:
             pocket.TaperAngle = float(draft_angle)
 
         if direction == DT_BOTH or direction == DT_MIDDLE:
-            pocket.Midplane = True
+            if hasattr(pocket, "SideType"):
+                enums = pocket.getEnumerationsOfProperty("SideType")
+                sym_val = next((e for e in enums if "symmetric" in e.lower()), None)
+                if sym_val:
+                    pocket.SideType = sym_val
+                else:
+                    pocket.Midplane = True
+            else:
+                pocket.Midplane = True
         elif direction == DT_REVERSE:
             pocket.Reversed = True
 

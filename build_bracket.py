@@ -2,15 +2,13 @@
 # Запуск: .venv\Scripts\python.exe build_bracket.py
 
 from kompas_core import (
+    DT_BOTH,
     DT_NORMAL,
     DT_REVERSE,
-    DT_BOTH,
     OBJ_FACE,
     PLANE_XY,
-    PLANE_XZ,
     PLANE_YZ,
     STYLE_MAIN,
-    STYLE_AXIS,
     KompasPart,
     _wrap,
 )
@@ -29,14 +27,18 @@ VARIABLES = {
     "tr": (10.0, "Толщина центрального ребра жёсткости"),
     "dm": (9.0, "Диаметр 4 крепёжных отверстий в основании"),
     "lx": (84.0, "Межосевое расстояние крепёжных отверстий по X (±42)"),
-    "ly": (36.0, "Межосевое расстояние крепёжных отверстий по Y (центр Y=-8, отступы -26 и +10)"),
+    "ly": (36.0, "Межосевое расстояние крепёжных отверстий по Y (Y=-26 и Y=+10)"),
     "R": (6.0, "Радиус скругления двух передних вертикальных углов основания"),
 }
 
-EXPECTED_VOLUME = None  # type: float | None
 
-
-def _find_vertical_edge(part: KompasPart, x_coord: float, y_coord: float, z_min: float = 0.0, z_max: float = 12.0):
+def _find_vertical_edge(
+    part: KompasPart,
+    x_coord: float,
+    y_coord: float,
+    z_min: float = 0.0,
+    z_max: float = 12.0,
+):
     """Находит вертикальное ребро по заданным X, Y координатам в диапазоне Z."""
     part_ents = _wrap(K5.ksEntityCollection, part.part.EntityCollection(OBJ_FACE))
     for i in range(part_ents.GetCount()):
@@ -48,8 +50,10 @@ def _find_vertical_edge(part: KompasPart, x_coord: float, y_coord: float, z_min:
         if not bbox:
             continue
         if (
-            bbox[0] <= x_coord + 0.5 and bbox[3] >= x_coord - 0.5
-            and bbox[1] <= y_coord + 0.5 and bbox[4] >= y_coord - 0.5
+            bbox[0] <= x_coord + 0.5
+            and bbox[3] >= x_coord - 0.5
+            and bbox[1] <= y_coord + 0.5
+            and bbox[4] >= y_coord - 0.5
             and bbox[2] <= z_min + 0.5
             and bbox[5] >= z_max - 0.5
         ):
@@ -57,7 +61,10 @@ def _find_vertical_edge(part: KompasPart, x_coord: float, y_coord: float, z_min:
             if not loops:
                 continue
             for li in range(loops.GetCount()):
-                edges = _wrap(K5.ksEdgeCollection, _wrap(K5.ksLoop, loops.GetByIndex(li)).EdgeCollection())
+                edges = _wrap(
+                    K5.ksEdgeCollection,
+                    _wrap(K5.ksLoop, loops.GetByIndex(li)).EdgeCollection(),
+                )
                 if not edges:
                     continue
                 for j in range(edges.GetCount()):
@@ -70,17 +77,20 @@ def _find_vertical_edge(part: KompasPart, x_coord: float, y_coord: float, z_min:
                     ok2, x2, y2, z2 = v2.GetPoint(0.0, 0.0, 0.0)
                     if not (ok1 and ok2):
                         continue
-                    if abs(x1 - x2) < 0.1 and abs(y1 - y2) < 0.1 and abs(z1 - z2) > 1.0:
-                        if abs(x1 - x_coord) < 0.5 and abs(y1 - y_coord) < 0.5:
-                            return ed
+                    if (
+                        abs(x1 - x2) < 0.1
+                        and abs(y1 - y2) < 0.1
+                        and abs(x1 - x_coord) < 0.5
+                        and abs(y1 - y_coord) < 0.5
+                        and abs(min(z1, z2) - z_min) < 0.5
+                        and abs(max(z1, z2) - z_max) < 0.5
+                    ):
+                        return ed
     return None
 
 
 def build_bracket(part: KompasPart):
-    """Построение кронштейна опоры Bracket_120x80x70.
-
-    Топология: сплошной блок L×B×H → вырез фасада → бобышка → отверстие → ребро → крепёжи → скругления.
-    """
+    """Построение кронштейна опоры Bracket_120x80x70 в КОМПАС-3D."""
     L = VARIABLES["L"][0]
     B = VARIABLES["B"][0]
     H = VARIABLES["H"][0]
@@ -97,128 +107,208 @@ def build_bracket(part: KompasPart):
 
     half_L = L / 2.0
     half_B = B / 2.0
-    y_stand_inner = half_B - s      # +28.0 — внутренняя грань стойки (начало стойки)
-    y_boss_front = y_stand_inner - lb  # +16.0 — передний торец бобышки
+    y_stand_inner = half_B - s  # +28.0
+    y_hole_front = -8.0 - ly / 2.0  # -26.0
+    y_hole_back = y_hole_front + ly  # +10.0
 
-    # --- Шаг 1: Сплошной блок L × B × H на PLANE_XY ---
-    def sketch_block(b):
+    # --- Шаг 1: Основание L × B × s на PLANE_XY (2D X=+X, 2D Y=+Y, DT_NORMAL=+Z) ---
+    def sketch_base(b):
         b.rect(0.0, 0.0, L, B, centered=True, style=STYLE_MAIN)
-        b.dim_hor(y_line=half_B + 10.0, x1=-half_L, x2=half_L, var_name="L")
-        b.dim_ver(x_line=-half_L - 10.0, y1=-half_B, y2=half_B, var_name="B")
+        b.dim_hor(
+            y_line=half_B + 10.0,
+            x1=-half_L,
+            x2=half_L,
+            y1=half_B,
+            y2=half_B,
+            var_name="L",
+        )
+        b.dim_ver(
+            x_line=-half_L - 10.0,
+            y1=-half_B,
+            y2=half_B,
+            x1=-half_L,
+            x2=-half_L,
+            var_name="B",
+        )
         b.center_on_origin(L, B)
 
-    sk1 = part.create_sketch(plane=PLANE_XY, draw_fn=sketch_block)
-    part.extrude(sk1, depth=H, direction=DT_NORMAL, expr="H")
+    sk1 = part.create_sketch(plane=PLANE_XY, draw_fn=sketch_base)
+    part.extrude(sk1, depth=s, direction=DT_NORMAL, expr="s")
 
-    # --- Шаг 2: Вырез фасада (удаляем материал перед стойкой: Y=-40..+28, Z=12..70) ---
-    plane_front_cut = part.create_offset_plane("xz", y_stand_inner, expr="B/2-s")
+    # --- Шаг 2: Вертикальная стойка на плоскости Z = s ---
+    plane_stand = part.create_offset_plane("xy", s, expr="s")
 
-    def sketch_front_cut(b):
-        b.rect(0.0, s, L, H - s, centered=True, style=STYLE_MAIN)
-        b.dim_hor(y_line=(s + H) / 2.0 + 10.0, x1=-half_L, x2=half_L, var_name="L")
-        b.dim_ver(x_line=half_L + 10.0, y1=s, y2=H, var_name="H-s")
-        b.center_on_origin(L, H - s)
+    def sketch_stand(b):
+        b.rect(-half_L, y_stand_inner, L, s, centered=False, style=STYLE_MAIN)
+        b.dim_hor(
+            y_line=half_B + 10.0,
+            x1=-half_L,
+            x2=half_L,
+            y1=half_B,
+            y2=half_B,
+            var_name="L",
+        )
+        b.dim_ver(
+            x_line=half_L + 10.0,
+            y1=y_stand_inner,
+            y2=half_B,
+            x1=half_L,
+            x2=half_L,
+            var_name="s",
+        )
+        b.dim_ver(
+            x_line=-half_L - 10.0,
+            y1=0.0,
+            y2=half_B,
+            x1=0.0,
+            x2=-half_L,
+            var_name="B/2",
+        )
+        b.align_v((0.0, half_B), (0.0, 0.0))
 
-    sk2 = part.create_sketch(plane=plane_front_cut, draw_fn=sketch_front_cut)
-    part.cut(sk2, through_all=True, direction=DT_REVERSE)
+    sk2 = part.create_sketch(plane=plane_stand, draw_fn=sketch_stand)
+    part.boss_extrude(sk2, depth=H - s, direction=DT_NORMAL, expr="H-s")
 
-    # --- Шаг 3: Бобышка на передней грани стойки (Y = y_stand_inner = +28) ---
+    # --- Шаг 3: Бобышка на передней грани стойки (Y = +28.0) ---
+    # На PLANE_XZ ("Плоскость ZX"): 2D x = +X, 2D y = -Z, DT_NORMAL = +Y, DT_REVERSE = -Y
     plane_boss = part.create_offset_plane("xz", y_stand_inner, expr="B/2-s")
 
     def sketch_boss(b):
-        b.circle(0.0, hb, db / 2.0, style=STYLE_MAIN)
-        b.dim_diam(0.0, hb, db / 2.0, var_name="db")
-        b.align_h((0.0, hb), (0.0, 0.0))
-        b.dim_ver(x_line=5.0, y1=0.0, y2=hb, var_name="hb")
+        b.circle(0.0, -hb, db / 2.0, style=STYLE_MAIN)
+        b.dim_diam(0.0, -hb, db / 2.0, var_name="db")
+        b.align_v((0.0, -hb), (0.0, 0.0))
+        b.dim_ver(x_line=db / 2.0 + 10.0, y1=-hb, y2=0.0, var_name="hb")
 
     sk3 = part.create_sketch(plane=plane_boss, draw_fn=sketch_boss)
     part.boss_extrude(sk3, depth=lb, direction=DT_REVERSE, expr="lb")
 
-    # --- Шаг 4: Сквозное отверстие в бобышке и стойке ---
-    plane_hole = part.create_offset_plane("xz", y_boss_front, expr="B/2-s-lb")
-
-    def sketch_through_hole(b):
-        b.circle(0.0, hb, d0 / 2.0, style=STYLE_MAIN)
-        b.dim_diam(0.0, hb, d0 / 2.0, var_name="d0")
-        b.align_h((0.0, hb), (0.0, 0.0))
-        b.dim_ver(x_line=5.0, y1=0.0, y2=hb, var_name="hb")
-
-    sk4 = part.create_sketch(plane=plane_hole, draw_fn=sketch_through_hole)
-    part.cut(sk4, through_all=True)
-
-    # --- Шаг 5: Ребро жёсткости — создаём через выдавливание на PLANE_XZ и поворот ---
-    # В KOMPAS проще: создаём ребро как выдавливание на PLANE_XZ (профиль в XZ),
-    # а затем поворачиваем/позиционируем. Но KOMPAS не имеет простого поворота тел.
-    # Альтернатива: создаём ребро через boss_extrude на PLANE_YZ с правильными координатами.
-    # На PLANE_YZ: 2D X → 3D Y, 2D Y → 3D Z.
-    # Треугольник в (Y, Z): (-30, s) -> (y_stand_inner, 30) -> (y_stand_inner, s).
-    # Используем смещённую плоскость X = -tr/2 и DT_NORMAL выдавливание на tr.
-
-    plane_rib = part.create_offset_plane("yz", -tr / 2.0, expr="tr/2")
-
+    # --- Шаг 4: Ребро жёсткости на PLANE_YZ ---
+    # На PLANE_YZ ("Плоскость ZY"): 2D x = -Z, 2D y = -Y
+    # 3D (Y, Z): (-30, s) -> (+28, 30) -> (+28, s) => 2D (-Z, -Y): (-s, +30) -> (-30, -28) -> (-s, -28)
     def sketch_rib(b):
         pts = [
-            (-30.0, s),
-            (y_stand_inner, 30.0),
-            (y_stand_inner, s),
+            (-s, 30.0),
+            (-30.0, -y_stand_inner),
+            (-s, -y_stand_inner),
         ]
         b.polygon(pts, closed=True, style=STYLE_MAIN)
-        b.dim_hor(y_line=30.0 + 5.0, x1=-30.0, x2=y_stand_inner, var_name="B/2-s+30")
-        b.dim_ver(x_line=y_stand_inner + 5.0, y1=s, y2=30.0, var_name="30-s")
-        b.align_h((y_stand_inner, s), (y_stand_inner, 0.0))
-        b.align_v((-30.0, s), (0.0, s))
+        b.dim_hor(
+            y_line=-y_stand_inner - 8.0,
+            x1=-s,
+            x2=0.0,
+            y1=-y_stand_inner,
+            y2=0.0,
+            var_name="s",
+        )
+        b.dim_hor(
+            y_line=-y_stand_inner - 16.0,
+            x1=-30.0,
+            x2=0.0,
+            y1=-y_stand_inner,
+            y2=0.0,
+            var_name="30",
+        )
+        b.dim_ver(
+            x_line=-s + 8.0,
+            y1=-y_stand_inner,
+            y2=0.0,
+            x1=-s,
+            x2=0.0,
+            var_name="B/2-s",
+        )
+        b.dim_ver(
+            x_line=-s + 8.0,
+            y1=0.0,
+            y2=30.0,
+            x1=0.0,
+            x2=-s,
+            var_name="30",
+        )
 
-    sk5 = part.create_sketch(plane=plane_rib, draw_fn=sketch_rib)
-    part.boss_extrude(sk5, depth=tr, direction=DT_NORMAL, expr="tr")
-    # Debug bbox после ребра
-    dx, dy, dz = part.bbox()
-    print(f"[DEBUG BBOX after rib] dx={dx:.2f}, dy={dy:.2f}, dz={dz:.2f}")
+    sk4 = part.create_sketch(plane=PLANE_YZ, draw_fn=sketch_rib)
+    part.boss_extrude(sk4, depth=tr / 2.0, direction=DT_BOTH, expr="tr/2")
 
-    # --- Шаг 6: 4 крепёжных отверстия в основании (сквозные) ---
-    plane_mount = part.create_offset_plane("xy", s, expr="s")
+    # --- Шаг 5: Сквозное отверстие d0 от задней плоскости Y = B/2 + 1 в -Y (DT_NORMAL) ---
+    plane_hole = part.create_offset_plane("xz", half_B + 1.0, expr="B/2+1")
+
+    def sketch_through_hole(b):
+        b.circle(0.0, -hb, d0 / 2.0, style=STYLE_MAIN)
+        b.dim_diam(0.0, -hb, d0 / 2.0, var_name="d0")
+        b.align_v((0.0, -hb), (0.0, 0.0))
+        b.dim_ver(x_line=d0 / 2.0 + 10.0, y1=-hb, y2=0.0, var_name="hb")
+
+    sk5 = part.create_sketch(plane=plane_hole, draw_fn=sketch_through_hole)
+    part.cut(sk5, depth=s + lb + 2.0, direction=DT_NORMAL, expr="s+lb+2")
+
+    # --- Шаг 6: 4 крепёжных отверстия dm в основании через point_pattern (сверху вниз от Z = s + 0.5) ---
+    plane_mount = part.create_offset_plane("xy", s + 0.5, expr="s+0.5")
 
     def sketch_base_mount_hole(b):
-        b.circle(lx / 2.0, -26.0, dm / 2.0, style=STYLE_MAIN)
-        b.dim_diam(lx / 2.0, -26.0, dm / 2.0, var_name="dm")
-        b.dim_hor(y_line=-26.0 - 8.0, x1=0.0, x2=lx / 2.0, var_name="lx/2")
-        b.dim_ver(x_line=lx / 2.0 + 8.0, y1=0.0, y2=-26.0, var_name="26")
-        b.align_h((lx / 2.0, -26.0), (0.0, 0.0))
+        b.circle(lx / 2.0, y_hole_front, dm / 2.0, style=STYLE_MAIN)
+        b.dim_diam(lx / 2.0, y_hole_front, dm / 2.0, var_name="dm")
+        b.dim_hor(
+            y_line=y_hole_front - 8.0,
+            x1=0.0,
+            x2=lx / 2.0,
+            y1=0.0,
+            y2=y_hole_front,
+            var_name="lx/2",
+        )
+        b.dim_ver(
+            x_line=lx / 2.0 + 8.0,
+            y1=y_hole_front,
+            y2=0.0,
+            x1=lx / 2.0,
+            x2=0.0,
+            var_name="ly/2+8",
+        )
 
     sk6 = part.create_sketch(plane=plane_mount, draw_fn=sketch_base_mount_hole)
-    cut_mount = part.cut(sk6, through_all=True)
+    cut_mount = part.cut(sk6, depth=s + 1.0, direction=DT_NORMAL, expr="s+1")
 
-    # Эскиз управляющих точек для point_pattern (4 точки)
     def sketch_mount_points(b):
-        b.point(lx / 2.0, -26.0, style=STYLE_MAIN)
-        b.point(-lx / 2.0, -26.0, style=STYLE_MAIN)
-        b.point(lx / 2.0, 10.0, style=STYLE_MAIN)
-        b.point(-lx / 2.0, 10.0, style=STYLE_MAIN)
-        b.fix_point(lx / 2.0, -26.0)
-        b.align_v((lx / 2.0, -26.0), (lx / 2.0, 10.0))
-        b.align_v((-lx / 2.0, -26.0), (-lx / 2.0, 10.0))
-        b.align_h((lx / 2.0, -26.0), (-lx / 2.0, -26.0))
-        b.align_h((lx / 2.0, 10.0), (-lx / 2.0, 10.0))
-        b.dim_hor(y_line=-26.0 - 8.0, x1=-lx / 2.0, x2=lx / 2.0, var_name="lx")
-        b.dim_ver(x_line=lx / 2.0 + 8.0, y1=-26.0, y2=10.0, var_name="ly")
-        b.dim_ver(x_line=lx / 2.0 + 8.0, y1=0.0, y2=-26.0, var_name="26")
-        b.dim_ver(x_line=lx / 2.0 + 8.0, y1=0.0, y2=10.0, var_name="10")
+        b.point(lx / 2.0, y_hole_front, style=STYLE_MAIN)
+        b.point(-lx / 2.0, y_hole_front, style=STYLE_MAIN)
+        b.point(lx / 2.0, y_hole_back, style=STYLE_MAIN)
+        b.point(-lx / 2.0, y_hole_back, style=STYLE_MAIN)
+        b.fix_point(lx / 2.0, y_hole_front)
+        b.align_v((lx / 2.0, y_hole_front), (lx / 2.0, y_hole_back))
+        b.align_v((-lx / 2.0, y_hole_front), (-lx / 2.0, y_hole_back))
+        b.align_h((lx / 2.0, y_hole_front), (-lx / 2.0, y_hole_front))
+        b.align_h((lx / 2.0, y_hole_back), (-lx / 2.0, y_hole_back))
+        b.dim_hor(
+            y_line=y_hole_front - 8.0,
+            x1=-lx / 2.0,
+            x2=lx / 2.0,
+            y_pts=y_hole_front,
+            var_name="lx",
+        )
+        b.dim_ver(
+            x_line=lx / 2.0 + 8.0,
+            y1=y_hole_front,
+            y2=y_hole_back,
+            x_pts=lx / 2.0,
+            var_name="ly",
+        )
 
     sk_points = part.create_sketch(plane=plane_mount, draw_fn=sketch_mount_points)
     part.point_pattern(features=[cut_mount], driven_obj=sk_points)
 
     # --- Шаг 7: Скругление двух передних вертикальных рёбер основания ---
-    edge_left = _find_vertical_edge(part, x_coord=-half_L, y_coord=-half_B, z_min=0.0, z_max=s)
-    edge_right = _find_vertical_edge(part, x_coord=half_L, y_coord=-half_B, z_min=0.0, z_max=s)
-
+    edge_left = _find_vertical_edge(
+        part, x_coord=-half_L, y_coord=-half_B, z_min=0.0, z_max=s
+    )
+    edge_right = _find_vertical_edge(
+        part, x_coord=half_L, y_coord=-half_B, z_min=0.0, z_max=s
+    )
     if not edge_left or not edge_right:
-        raise RuntimeError("[FAIL FILLET] Не найдены передние вертикальные ребра для скругления!")
-
+        raise RuntimeError(
+            "[FAIL FILLET] Не найдены передние вертикальные рёбра основания!"
+        )
     part.fillet([edge_left, edge_right], radius=R, expr="R")
 
-    # --- Финальная валидация габаритов ---
     part.assert_bbox(exp_x=L, exp_y=B, exp_z=H, tol=0.1)
-    vol = part.volume()
-    print(f"[INFO VOLUME KOMPAS] Итоговый объём кронштейна: {vol:.2f} мм3")
+    print(f"[INFO VOLUME KOMPAS] Итоговый объём кронштейна: {part.volume():.2f} мм3")
     return part
 
 
@@ -229,7 +319,6 @@ if __name__ == "__main__":
         build_bracket(part)
         part.save("output/Bracket_120x80x70.m3d")
         part.save_screenshot("output/Bracket_120x80x70.png")
-        print("[SUCCESS] Деталь Bracket_120x80x70 построена и провалидирована")
     except Exception:
         part.close()
         raise

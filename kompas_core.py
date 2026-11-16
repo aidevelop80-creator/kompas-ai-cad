@@ -627,9 +627,15 @@ class KompasPart:
             # Получаем базовую плоскость как сырой COM-объект
             if isinstance(base_plane, str):
                 p_map = {
-                    "xy": PLANE_XY, "xoy": PLANE_XY, "yx": PLANE_XY,
-                    "xz": PLANE_XZ, "xoz": PLANE_XZ, "zx": PLANE_XZ,
-                    "yz": PLANE_YZ, "yoz": PLANE_YZ, "zy": PLANE_YZ,
+                    "xy": PLANE_XY,
+                    "xoy": PLANE_XY,
+                    "yx": PLANE_XY,
+                    "xz": PLANE_XZ,
+                    "xoz": PLANE_XZ,
+                    "zx": PLANE_XZ,
+                    "yz": PLANE_YZ,
+                    "yoz": PLANE_YZ,
+                    "zy": PLANE_YZ,
                 }
                 plane_type = p_map.get(base_plane.lower().strip(), PLANE_XY)
             else:
@@ -1444,7 +1450,10 @@ class KompasPart:
         ent = _wrap(K5.ksEntity, self.part.NewEntity(OBJ_BASE_EXTRUDE))
         defn = _wrap(K5.ksBaseExtrusionDefinition, ent.GetDefinition())
         defn.directionType = direction
-        defn.SetSideParam(True, 0, float(depth), float(draft_angle), False)
+        if direction == DT_REVERSE:
+            defn.SetSideParam(False, 0, float(depth), float(draft_angle), False)
+        else:
+            defn.SetSideParam(True, 0, float(depth), float(draft_angle), False)
         if direction in (DT_BOTH, DT_MIDDLE):
             defn.SetSideParam(False, 0, float(depth), float(draft_angle), False)
         defn.SetSketch(_ole(sketch_ent))
@@ -1457,9 +1466,10 @@ class KompasPart:
         self.part.Update()
 
         if expr:
-            self._bind_new_vars_to_expressions(
-                vars_before, [(float(depth), expr)], context=ent.name
-            )
+            pending = [(float(depth), expr)]
+            if direction in (DT_BOTH, DT_MIDDLE):
+                pending.append((float(depth), expr))
+            self._bind_new_vars_to_expressions(vars_before, pending, context=ent.name)
             self.part.RebuildModel()
             self.part.Update()
 
@@ -1491,7 +1501,10 @@ class KompasPart:
         ent = _wrap(K5.ksEntity, self.part.NewEntity(OBJ_BOSS_EXTRUDE))
         defn = _wrap(K5.ksBossExtrusionDefinition, ent.GetDefinition())
         defn.directionType = direction
-        defn.SetSideParam(True, 0, float(depth), float(draft_angle), False)
+        if direction == DT_REVERSE:
+            defn.SetSideParam(False, 0, float(depth), float(draft_angle), False)
+        else:
+            defn.SetSideParam(True, 0, float(depth), float(draft_angle), False)
         if direction in (DT_BOTH, DT_MIDDLE):
             defn.SetSideParam(False, 0, float(depth), float(draft_angle), False)
         defn.SetSketch(_ole(sketch_ent))
@@ -1500,8 +1513,33 @@ class KompasPart:
                 f"[FAIL BOSS EXTRUDE] Операция приклеивания '{ent.name}' не построилась!"
             )
             self.close()
-            raise RuntimeError("[FAIL BOSS EXTRUDE] Операция приклеивания не построилась!")
+            raise RuntimeError(
+                "[FAIL BOSS EXTRUDE] Операция приклеивания не построилась!"
+            )
         self.part.Update()
+
+        if expr:
+            pending = [(float(depth), expr)]
+            if direction in (DT_BOTH, DT_MIDDLE):
+                pending.append((float(depth), expr))
+            self._bind_new_vars_to_expressions(vars_before, pending, context=ent.name)
+            self.part.RebuildModel()
+            self.part.Update()
+
+        vol_after = self.volume()
+        log.info(
+            f"[BOSS EXTRUDE OK] '{ent.name}': depth={depth} (expr='{expr}'), "
+            f"V_before={vol_before:.2f} -> V_after={vol_after:.2f} (ΔV=+{vol_after - vol_before:.2f} мм³)"
+        )
+        if vol_after <= vol_before + 1e-9:
+            log.error(
+                "[FAIL BOSS EXTRUDE] Объем детали не увеличился после приклеивания!"
+            )
+            self.close()
+            raise RuntimeError(
+                "[FAIL BOSS EXTRUDE] Объем детали не увеличился после приклеивания!"
+            )
+        return ent
 
         if expr:
             self._bind_new_vars_to_expressions(
@@ -1516,9 +1554,13 @@ class KompasPart:
             f"V_before={vol_before:.2f} -> V_after={vol_after:.2f} (ΔV=+{vol_after - vol_before:.2f} мм³)"
         )
         if vol_after <= vol_before + 1e-9:
-            log.error("[FAIL BOSS EXTRUDE] Объем детали не увеличился после приклеивания!")
+            log.error(
+                "[FAIL BOSS EXTRUDE] Объем детали не увеличился после приклеивания!"
+            )
             self.close()
-            raise RuntimeError("[FAIL BOSS EXTRUDE] Объем детали не увеличился после приклеивания!")
+            raise RuntimeError(
+                "[FAIL BOSS EXTRUDE] Объем детали не увеличился после приклеивания!"
+            )
         return ent
 
     def cut(
