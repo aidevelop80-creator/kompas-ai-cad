@@ -619,9 +619,10 @@ class KompasPart:
         base_plane: имя базовой плоскости ("xy", "xz", "yz"), её тип (int), или ksEntity грани/плоскости.
         expr: выражение для параметризации смещения.
         """
+        vars_before = set(self._get_all_feature_var_names())
         # Если передан ksEntity (грань или плоскость), используем его напрямую
         if not isinstance(base_plane, (str, int)):
-            base_ent = _wrap(K5.ksEntity, base_plane)
+            base_ent_raw = _ole(_wrap(K5.ksEntity, base_plane))
         else:
             # Получаем базовую плоскость как сырой COM-объект
             if isinstance(base_plane, str):
@@ -637,7 +638,6 @@ class KompasPart:
 
         ent = _wrap(K5.ksEntity, self.part.NewEntity(OBJ_PLANE_OFFSET))
         defn = _wrap(K5.ksPlaneOffsetDefinition, ent.GetDefinition())
-        base_ent_raw = _ole(base_ent)
 
         # Используем динамический диспетч для SetPlane, так как в сгенерированном враппере
         # метод может называться иначе или иметь другую сигнатуру
@@ -1474,6 +1474,51 @@ class KompasPart:
             raise RuntimeError(
                 "[FAIL EXTRUDE] Объем детали не увеличился после выдавливания!"
             )
+        return ent
+
+    def boss_extrude(
+        self,
+        sketch_ent,
+        depth: float,
+        direction: int = DT_NORMAL,
+        draft_angle: float = 0.0,
+        expr: str = None,
+    ):
+        """Добавляющее выдавливание (Boss Extrusion / Приклеить выдавливанием) — OBJ_BOSS_EXTRUDE = 25."""
+        vol_before = self.volume()
+        vars_before = set(self._get_all_feature_var_names())
+
+        ent = _wrap(K5.ksEntity, self.part.NewEntity(OBJ_BOSS_EXTRUDE))
+        defn = _wrap(K5.ksBossExtrusionDefinition, ent.GetDefinition())
+        defn.directionType = direction
+        defn.SetSideParam(True, 0, float(depth), float(draft_angle), False)
+        if direction in (DT_BOTH, DT_MIDDLE):
+            defn.SetSideParam(False, 0, float(depth), float(draft_angle), False)
+        defn.SetSketch(_ole(sketch_ent))
+        if not ent.Create():
+            log.error(
+                f"[FAIL BOSS EXTRUDE] Операция приклеивания '{ent.name}' не построилась!"
+            )
+            self.close()
+            raise RuntimeError("[FAIL BOSS EXTRUDE] Операция приклеивания не построилась!")
+        self.part.Update()
+
+        if expr:
+            self._bind_new_vars_to_expressions(
+                vars_before, [(float(depth), expr)], context=ent.name
+            )
+            self.part.RebuildModel()
+            self.part.Update()
+
+        vol_after = self.volume()
+        log.info(
+            f"[BOSS EXTRUDE OK] '{ent.name}': depth={depth} (expr='{expr}'), "
+            f"V_before={vol_before:.2f} -> V_after={vol_after:.2f} (ΔV=+{vol_after - vol_before:.2f} мм³)"
+        )
+        if vol_after <= vol_before + 1e-9:
+            log.error("[FAIL BOSS EXTRUDE] Объем детали не увеличился после приклеивания!")
+            self.close()
+            raise RuntimeError("[FAIL BOSS EXTRUDE] Объем детали не увеличился после приклеивания!")
         return ent
 
     def cut(
@@ -2548,7 +2593,7 @@ class KompasPart:
                 f"Фактически в КОМПАСе: ({dx:.2f} x {dy:.2f} x {dz:.2f}) мм."
             )
         log.info(
-            f"[OK BBOX] Габариты подтверждены: {dx:.2f} x {dy:.2f} x {dz:.2f} мм | V = {self.volume():.2f} мм³"
+            f"[OK BBOX] Габариты подтверждены: {dx:.2f} x {dy:.2f} x {dz:.2f} мм | V = {self.volume():.2f} мм3"
         )
 
     def close_if_already_open(self, filepath: str):

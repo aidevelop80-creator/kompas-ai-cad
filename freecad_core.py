@@ -1477,7 +1477,7 @@ class FreeCadPart:
                 f"фактически ({dx:.2f} x {dy:.2f} x {dz:.2f}) мм"
             )
         log.info(
-            f"[OK BBOX] Габариты подтверждены: {dx:.2f} x {dy:.2f} x {dz:.2f} мм | V = {self.volume():.2f} мм³"
+            f"[OK BBOX] Габариты подтверждены: {dx:.2f} x {dy:.2f} x {dz:.2f} мм | V = {self.volume():.2f} мм3"
         )
 
     def save(
